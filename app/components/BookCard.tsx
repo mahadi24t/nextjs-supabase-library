@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { MapPin, BookOpen, Pencil, Trash2 } from 'lucide-react';
+import { useAuth } from '@/app/context/AuthContext';
 import { cn } from '@/app/lib/utils';
 import type { Book } from '@/app/lib/types';
 
@@ -29,6 +30,7 @@ function getGenreColor(genre: string): string {
 }
 
 export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardProps) {
+  const { isAdmin } = useAuth();
   const { title, authors, genres, location, availability, coverUrl, publishedYear, language } = book;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
@@ -108,38 +110,40 @@ export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardPr
           </span>
         </div>
 
-        {/* Quick actions — visible on hover */}
-        <div className="absolute inset-x-0 bottom-0 z-20 flex gap-1 p-2 bg-gradient-to-t from-black/80 via-black/50 to-transparent translate-y-full group-hover:translate-y-0 transition-transform duration-200">
-          <button
-            id={`issue-book-${book.id}`}
-            onClick={() => onIssue(book)}
-            aria-label={`${availability === 'available' ? 'Issue' : 'Return'} "${title}"`}
-            className={cn(
-              'flex-1 py-1.5 text-xs font-semibold text-white rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white min-h-[36px]',
-              availability === 'available'
-                ? 'bg-violet-600 hover:bg-violet-700'
-                : 'bg-amber-600 hover:bg-amber-700'
-            )}
-          >
-            {availability === 'available' ? 'Issue' : 'Return'}
-          </button>
-          <button
-            id={`edit-book-${book.id}`}
-            onClick={() => onEdit(book)}
-            aria-label={`Edit "${title}"`}
-            className="flex items-center justify-center w-9 h-9 bg-white/20 hover:bg-white/30 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white text-white"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-          </button>
-          <button
-            id={`delete-book-${book.id}`}
-            onClick={() => onDelete(book.id)}
-            aria-label={`Delete "${title}"`}
-            className="flex items-center justify-center w-9 h-9 bg-white/20 hover:bg-red-500/80 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white text-white"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        {/* Quick actions — accessible on mobile, visible on hover on desktop when Admin */}
+        {isAdmin && (
+          <div className="absolute inset-x-0 bottom-0 z-20 flex gap-1 p-1.5 sm:p-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent max-md:translate-y-0 md:translate-y-full md:group-hover:translate-y-0 transition-transform duration-200">
+            <button
+              id={`issue-book-${book.id}`}
+              onClick={() => onIssue(book)}
+              aria-label={`${availability === 'available' ? 'Issue' : 'Return'} "${title}"`}
+              className={cn(
+                'flex-1 py-1.5 px-2 text-xs font-semibold text-white rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white min-h-[36px] flex items-center justify-center active:scale-95 shadow-sm',
+                availability === 'available'
+                  ? 'bg-violet-600 hover:bg-violet-700'
+                  : 'bg-amber-600 hover:bg-amber-700'
+              )}
+            >
+              {availability === 'available' ? 'Issue' : 'Return'}
+            </button>
+            <button
+              id={`edit-book-${book.id}`}
+              onClick={() => onEdit(book)}
+              aria-label={`Edit "${title}"`}
+              className="flex items-center justify-center w-9 h-9 min-h-[36px] min-w-[36px] bg-white/20 hover:bg-white/30 active:scale-95 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white text-white shrink-0 shadow-sm"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+            <button
+              id={`delete-book-${book.id}`}
+              onClick={() => onDelete(book.id)}
+              aria-label={`Delete "${title}"`}
+              className="flex items-center justify-center w-9 h-9 min-h-[36px] min-w-[36px] bg-white/20 hover:bg-red-500/80 active:scale-95 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white text-white shrink-0 shadow-sm"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Card Body */}

@@ -571,4 +571,41 @@ export async function returnBookIssue(issueId: string, bookId: string): Promise<
   if (bookError) throw bookError;
 }
 
+/**
+ * Returns an issued book given only its bookId.
+ * Updates any active/overdue book_issues record and sets the book to 'available'.
+ */
+export async function returnBookByBookId(bookId: string): Promise<void> {
+  const now = new Date().toISOString();
+
+  // Find the latest active issue for this book (if one exists in book_issues)
+  const { data: issues } = await supabase
+    .from('book_issues')
+    .select('id')
+    .eq('book_id', bookId)
+    .is('returned_at', null)
+    .order('issued_at', { ascending: false })
+    .limit(1);
+
+  if (issues && issues.length > 0) {
+    const issueId = (issues[0] as { id: string }).id;
+    await supabase
+      .from('book_issues')
+      .update({
+        returned_at: now,
+        status: 'returned',
+      })
+      .eq('id', issueId);
+  }
+
+  // Always reset book availability back to available
+  const { error: bookError } = await supabase
+    .from('books')
+    .update({ availability: 'available' })
+    .eq('id', bookId);
+
+  if (bookError) throw bookError;
+}
+
+
 

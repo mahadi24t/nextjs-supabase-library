@@ -9,7 +9,9 @@ import BookCard from '@/app/components/BookCard';
 import FilterPills from '@/app/components/FilterPills';
 import AddBookModal from '@/app/components/AddBookModal';
 import EditBookModal from '@/app/components/EditBookModal';
-import { bookSelect, mapBookRowToBook, supabase, type BookRow } from '@/app/lib/supabase';
+import NewIssueModal from '@/app/components/NewIssueModal';
+import { useAuth } from '@/app/context/AuthContext';
+import { bookSelect, mapBookRowToBook, supabase, returnBookByBookId, type BookRow } from '@/app/lib/supabase';
 import type { Book } from '@/app/lib/types';
 
 function StatCard({ label, value, icon: Icon, accent }: {
@@ -80,6 +82,7 @@ function BookGridSkeleton() {
 }
 
 export default function CatalogPage() {
+  const { isAdmin } = useAuth();
   const [books, setBooks] = useState<Book[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -90,6 +93,7 @@ export default function CatalogPage() {
   const [activeGenre, setActiveGenre] = useState('All');
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editingBook, setEditingBook] = useState<Book | null>(null);
+  const [issuingBook, setIssuingBook] = useState<Book | null>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
 
   const loadBooks = useCallback(async () => {
@@ -179,15 +183,20 @@ export default function CatalogPage() {
   }), [books, genres]);
 
   const handleIssueBook = useCallback(async (book: Book) => {
-    const availability = book.availability === 'available' ? 'issued' : 'available';
-    setBooks((currentBooks) => currentBooks.map((currentBook) =>
-      currentBook.id === book.id ? { ...currentBook, availability } : currentBook,
-    ));
+    if (book.availability === 'available') {
+      setIssuingBook(book);
+    } else {
+      const confirmed = window.confirm(
+        `Confirm return of "${book.title}" to available catalog inventory?`
+      );
+      if (!confirmed) return;
 
-    const { error } = await supabase.from('books').update({ availability }).eq('id', book.id);
-    if (error) {
-      setLoadError(error.message);
-      void loadBooks();
+      try {
+        await returnBookByBookId(book.id);
+        await loadBooks();
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : 'Failed to return the book.');
+      }
     }
   }, [loadBooks]);
 
@@ -237,16 +246,19 @@ export default function CatalogPage() {
                 {isLoading ? 'Loading books…' : `${filteredBooks.length} of ${books.length} books`}
               </p>
             </div>
-            <button
-              id="add-book-desktop-btn"
-              onClick={() => setAddModalOpen(true)}
-              aria-label="Add a new book"
-              className="hidden md:flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white text-sm font-semibold rounded-lg transition-all shadow-lg shadow-violet-600/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
-            >
-              <Plus className="w-4 h-4" />
-              Add Book
-            </button>
+            {isAdmin && (
+              <button
+                id="add-book-desktop-btn"
+                onClick={() => setAddModalOpen(true)}
+                aria-label="Add a new book"
+                className="hidden md:flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white text-sm font-semibold rounded-lg transition-all shadow-lg shadow-violet-600/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
+              >
+                <Plus className="w-4 h-4" />
+                Add Book
+              </button>
+            )}
           </div>
+
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatCard label="Total Volumes" value={stats.total.toLocaleString()} icon={BookMarked} accent="bg-violet-500" />
@@ -306,14 +318,16 @@ export default function CatalogPage() {
         </main>
       </div>
 
-      <button
-        id="add-book-fab"
-        onClick={() => setAddModalOpen(true)}
-        aria-label="Add a new book"
-        className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white rounded-full shadow-lg shadow-violet-600/40 flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
-      >
-        <Plus className="w-6 h-6" />
-      </button>
+      {isAdmin && (
+        <button
+          id="add-book-fab"
+          onClick={() => setAddModalOpen(true)}
+          aria-label="Add a new book"
+          className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white rounded-full shadow-lg shadow-violet-600/40 flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      )}
 
       <BottomNav activeNav={activeNav} onNavChange={setActiveNav} />
 
@@ -331,6 +345,17 @@ export default function CatalogPage() {
         onBookUpdated={loadBooks}
         existingGenres={genres}
       />
+
+      <NewIssueModal
+        isOpen={Boolean(issuingBook)}
+        onClose={() => setIssuingBook(null)}
+        onIssueCreated={async () => {
+          await loadBooks();
+          setIssuingBook(null);
+        }}
+        preselectedBookId={issuingBook?.id}
+      />
     </div>
   );
 }
+

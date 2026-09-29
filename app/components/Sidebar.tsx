@@ -10,7 +10,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Library,
+  Lock,
 } from 'lucide-react';
+import { useAuth } from '@/app/context/AuthContext';
 import { cn } from '@/app/lib/utils';
 
 interface SidebarProps {
@@ -21,10 +23,10 @@ interface SidebarProps {
 }
 
 export const NAV_ITEMS = [
-  { id: 'catalog', label: 'Catalog', href: '/', icon: BookOpen },
-  { id: 'issue-return', label: 'Issue / Return', href: '/issue-return', icon: ArrowLeftRight },
-  { id: 'members', label: 'Members', href: '/members', icon: Users },
-  { id: 'settings', label: 'Settings', href: '/settings', icon: Settings },
+  { id: 'catalog', label: 'Catalog', href: '/', icon: BookOpen, requiresAdmin: false },
+  { id: 'issue-return', label: 'Issue / Return', href: '/issue-return', icon: ArrowLeftRight, requiresAdmin: true },
+  { id: 'members', label: 'Members', href: '/members', icon: Users, requiresAdmin: true },
+  { id: 'settings', label: 'Settings', href: '/settings', icon: Settings, requiresAdmin: true },
 ];
 
 export default function Sidebar({
@@ -34,6 +36,7 @@ export default function Sidebar({
   onNavChange,
 }: SidebarProps) {
   const pathname = usePathname();
+  const { isAdmin, openLoginModal } = useAuth();
 
   const activeNav =
     propActiveNav ??
@@ -68,28 +71,52 @@ export default function Sidebar({
 
       {/* Nav Links */}
       <nav className="flex flex-col gap-1 p-2 flex-1" aria-label="Main navigation">
-        {NAV_ITEMS.map(({ id, label, href, icon: Icon }) => {
+        {NAV_ITEMS.map(({ id, label, href, icon: Icon, requiresAdmin }) => {
           const isActive = activeNav === id;
+          const isLocked = requiresAdmin && !isAdmin;
+
           return (
             <Link
               key={id}
               href={href}
               id={`sidebar-nav-${id}`}
-              onClick={() => onNavChange?.(id)}
+              onClick={(e) => {
+                if (isLocked) {
+                  e.preventDefault();
+                  openLoginModal(`Sign in as Administrator to access the ${label} module.`);
+                  return;
+                }
+                onNavChange?.(id);
+              }}
               aria-current={isActive ? 'page' : undefined}
+              title={isLocked ? `${label} (Requires Admin Login)` : label}
               className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 min-h-[44px] w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
+                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 min-h-[44px] w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 relative group',
                 isActive
                   ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/30'
                   : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100',
+                isLocked && !isActive && 'opacity-80 hover:opacity-100',
               )}
             >
-              <Icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="truncate">{label}</span>}
+              <div className="relative shrink-0">
+                <Icon className="w-5 h-5" />
+                {isLocked && collapsed && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 rounded-full ring-2 ring-slate-900" />
+                )}
+              </div>
+              {!collapsed && (
+                <div className="flex items-center justify-between flex-1 min-w-0">
+                  <span className="truncate">{label}</span>
+                  {isLocked && (
+                    <Lock className="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition-colors shrink-0 ml-1.5" />
+                  )}
+                </div>
+              )}
             </Link>
           );
         })}
       </nav>
+
 
       {/* Collapse Toggle */}
       <div className="p-2 border-t border-slate-800">

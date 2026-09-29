@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
+import { AuthProvider } from '@/app/context/AuthContext';
+import AdminLoginModal from '@/app/components/AdminLoginModal';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -24,7 +26,10 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans antialiased">
-        {children}
+        <AuthProvider>
+          {children}
+          <AdminLoginModal />
+        </AuthProvider>
       </body>
     </html>
   );

@@ -10,9 +10,10 @@ interface NewIssueModalProps {
   isOpen: boolean;
   onClose: () => void;
   onIssueCreated: () => Promise<void> | void;
+  preselectedBookId?: string;
 }
 
-function NewIssueModalContent({ onClose, onIssueCreated }: Omit<NewIssueModalProps, 'isOpen'>) {
+function NewIssueModalContent({ onClose, onIssueCreated, preselectedBookId }: Omit<NewIssueModalProps, 'isOpen'>) {
   const [availableBooks, setAvailableBooks] = useState<Book[]>([]);
   const [activeMembers, setActiveMembers] = useState<Member[]>([]);
   const [isLoadingPrereqs, setIsLoadingPrereqs] = useState(true);
@@ -24,7 +25,7 @@ function NewIssueModalContent({ onClose, onIssueCreated }: Omit<NewIssueModalPro
     return d.toISOString().split('T')[0];
   }, []);
 
-  const [selectedBookId, setSelectedBookId] = useState('');
+  const [selectedBookId, setSelectedBookId] = useState<string>(preselectedBookId || '');
   const [selectedMemberId, setSelectedMemberId] = useState('');
   const [dueDate, setDueDate] = useState(defaultDueDate);
   const [notes, setNotes] = useState('');
@@ -42,14 +43,20 @@ function NewIssueModalContent({ onClose, onIssueCreated }: Omit<NewIssueModalPro
     async function loadPrereqs() {
       try {
         const [booksRes, membersData] = await Promise.all([
-          supabase.from('books').select(bookSelect).eq('availability', 'available').order('title', { ascending: true }),
+          supabase.from('books').select(bookSelect).order('title', { ascending: true }),
           fetchMembers(),
         ]);
 
         if (booksRes.data) {
           const mapped = (booksRes.data as unknown as BookRow[]).map(mapBookRowToBook);
-          setAvailableBooks(mapped);
-          if (mapped.length > 0) setSelectedBookId(mapped[0].id);
+          // Include available books, or the preselected book if specified
+          const eligible = mapped.filter((b) => b.availability === 'available' || b.id === preselectedBookId);
+          setAvailableBooks(eligible);
+          if (preselectedBookId && eligible.some((b) => b.id === preselectedBookId)) {
+            setSelectedBookId(preselectedBookId);
+          } else if (eligible.length > 0) {
+            setSelectedBookId(eligible[0].id);
+          }
         }
 
         const eligibleMembers = membersData.filter((m) => m.status === 'active');
@@ -63,7 +70,8 @@ function NewIssueModalContent({ onClose, onIssueCreated }: Omit<NewIssueModalPro
     }
 
     void loadPrereqs();
-  }, []);
+  }, [preselectedBookId]);
+
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
