@@ -14,11 +14,14 @@ import {
   Copy,
   Check,
   RefreshCw,
+  Lock,
 } from 'lucide-react';
 import AppLayout from '@/app/components/AppLayout';
+import { useAuth } from '@/app/context/AuthContext';
 import { supabase, bookSelect, mapBookRowToBook, type BookRow, fetchMembers, fetchBookIssues } from '@/app/lib/supabase';
 
 export default function SettingsPage() {
+  const { isAdmin, openLoginModal } = useAuth();
   // Circulation settings initialized lazily from localStorage
   const [loanDuration, setLoanDuration] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -239,6 +242,30 @@ export default function SettingsPage() {
           Configure circulation policies, monitor Supabase cloud database status, and export backups.
         </p>
       </div>
+
+      {/* Guest Restricted Access Lock Banner */}
+      {!isAdmin && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/90 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/60 text-amber-600 dark:text-amber-400 shrink-0">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs sm:text-sm font-bold">Restricted Access</h3>
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Please log in as Librarian to adjust system settings and policies.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => openLoginModal('Please log in as Librarian to adjust system settings.')}
+            className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 active:scale-95 text-white text-xs font-semibold shadow-sm transition-all shrink-0"
+          >
+            Librarian Login
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column (2 Cols) */}

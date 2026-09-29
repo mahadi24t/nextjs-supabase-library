@@ -15,9 +15,11 @@ import {
   Calendar,
   LoaderCircle,
   AlertCircle,
+  Lock,
 } from 'lucide-react';
 import AppLayout from '@/app/components/AppLayout';
 import MemberModal from '@/app/components/MemberModal';
+import { useAuth } from '@/app/context/AuthContext';
 import { fetchMembers, deleteMember } from '@/app/lib/supabase';
 import { cn } from '@/app/lib/utils';
 import type { Member } from '@/app/lib/types';
@@ -47,6 +49,7 @@ function StatCard({
 }
 
 export default function MembersPage() {
+  const { isAdmin, openLoginModal } = useAuth();
   const [members, setMembers] = useState<Member[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -175,17 +178,43 @@ export default function MembersPage() {
             {isLoading ? 'Loading members…' : `${filteredMembers.length} of ${members.length} registered patrons`}
           </p>
         </div>
-        <button
-          onClick={() => {
-            setEditingMember(null);
-            setModalOpen(true);
-          }}
-          className="hidden md:flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white text-sm font-semibold rounded-lg transition-all shadow-lg shadow-violet-600/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
-        >
-          <Plus className="w-4 h-4" />
-          Add Member
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => {
+              setEditingMember(null);
+              setModalOpen(true);
+            }}
+            className="hidden md:flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white text-sm font-semibold rounded-lg transition-all shadow-lg shadow-violet-600/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
+          >
+            <Plus className="w-4 h-4" />
+            Add Member
+          </button>
+        )}
       </div>
+
+      {/* Guest Restricted Access Lock Banner */}
+      {!isAdmin && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/90 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/60 text-amber-600 dark:text-amber-400 shrink-0">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs sm:text-sm font-bold">Restricted Access</h3>
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Please log in as Librarian to manage circulation and patrons.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => openLoginModal('Please log in as Librarian to manage circulation and patrons.')}
+            className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 active:scale-95 text-white text-xs font-semibold shadow-sm transition-all shrink-0"
+          >
+            Librarian Login
+          </button>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -373,30 +402,34 @@ export default function MembersPage() {
 
                     {/* Actions */}
                     <td className="px-5 py-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => {
-                            setEditingMember(member);
-                            setModalOpen(true);
-                          }}
-                          aria-label={`Edit ${member.fullName}`}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-slate-700 transition-colors"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => void handleDelete(member)}
-                          disabled={deletingId === member.id}
-                          aria-label={`Delete ${member.fullName}`}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                        >
-                          {deletingId === member.id ? (
-                            <LoaderCircle className="w-4 h-4 animate-spin text-red-500" />
-                          ) : (
-                            <Trash2 className="w-4 h-4" />
-                          )}
-                        </button>
-                      </div>
+                      {!isAdmin ? (
+                        <span className="text-xs text-slate-400 italic">Read-only</span>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingMember(member);
+                              setModalOpen(true);
+                            }}
+                            aria-label={`Edit ${member.fullName}`}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-slate-700 transition-colors"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => void handleDelete(member)}
+                            disabled={deletingId === member.id}
+                            aria-label={`Delete ${member.fullName}`}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                          >
+                            {deletingId === member.id ? (
+                              <LoaderCircle className="w-4 h-4 animate-spin text-red-500" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -419,16 +452,18 @@ export default function MembersPage() {
       )}
 
       {/* Mobile FAB */}
-      <button
-        onClick={() => {
-          setEditingMember(null);
-          setModalOpen(true);
-        }}
-        aria-label="Add Member"
-        className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white rounded-full shadow-lg shadow-violet-600/40 flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
-      >
-        <Plus className="w-6 h-6" />
-      </button>
+      {isAdmin && (
+        <button
+          onClick={() => {
+            setEditingMember(null);
+            setModalOpen(true);
+          }}
+          aria-label="Add Member"
+          className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white rounded-full shadow-lg shadow-violet-600/40 flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      )}
 
       {/* Member Modal */}
       <MemberModal

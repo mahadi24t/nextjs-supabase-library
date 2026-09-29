@@ -1,6 +1,13 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useSyncExternalStore,
+  ReactNode,
+} from 'react';
 
 interface AuthContextType {
   isAdmin: boolean;
@@ -14,14 +21,28 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function subscribeToAuth(callback: () => void) {
+  if (typeof window === 'undefined') return () => {};
+  window.addEventListener('storage', callback);
+  window.addEventListener('libstack_auth_change', callback);
+  return () => {
+    window.removeEventListener('storage', callback);
+    window.removeEventListener('libstack_auth_change', callback);
+  };
+}
+
+function getAuthSnapshot(): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem('libstack_admin_auth') === 'true';
+}
+
+function getServerAuthSnapshot(): boolean {
+  return false;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // Lazy initial state reads localStorage safely without triggering cascading renders in useEffect
-  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('libstack_admin_auth') === 'true';
-    }
-    return false;
-  });
+  // Subscribes cleanly to localStorage; strictly defaults to false during SSR
+  const isAdmin = useSyncExternalStore(subscribeToAuth, getAuthSnapshot, getServerAuthSnapshot);
 
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [loginPromptReason, setLoginPromptReason] = useState<string | null>(null);
@@ -31,8 +52,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (password === configuredPassword) {
       if (typeof window !== 'undefined') {
         localStorage.setItem('libstack_admin_auth', 'true');
+        window.dispatchEvent(new Event('libstack_auth_change'));
       }
-      setIsAdmin(true);
       setIsLoginModalOpen(false);
       setLoginPromptReason(null);
       return true;
@@ -43,9 +64,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('libstack_admin_auth');
+      window.dispatchEvent(new Event('libstack_auth_change'));
     }
-    setIsAdmin(false);
   }, []);
+
 
   const openLoginModal = useCallback((reason?: string) => {
     setLoginPromptReason(reason ?? null);
