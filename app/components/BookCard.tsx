@@ -1,7 +1,7 @@
 'use client';
 
+import { useState } from 'react';
 import { MapPin, BookOpen, Pencil, Trash2 } from 'lucide-react';
-import Image from 'next/image';
 import { cn } from '@/app/lib/utils';
 import type { Book } from '@/app/lib/types';
 
@@ -30,46 +30,77 @@ function getGenreColor(genre: string): string {
 
 export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardProps) {
   const { title, authors, genres, location, availability, coverUrl, publishedYear, language } = book;
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  const cleanCoverUrl = coverUrl?.trim() || null;
+  const hasCover = Boolean(cleanCoverUrl && failedUrl !== cleanCoverUrl);
 
   return (
     <article
       className="group relative flex flex-col rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 overflow-hidden"
       aria-label={`Book: ${title}`}
     >
-      {/* Cover Image */}
-      <div className="relative w-full aspect-[2/3] bg-gradient-to-br from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-600 overflow-hidden">
-        {coverUrl ? (
-          <Image
-            src={coverUrl}
+      {/* Cover Image Container */}
+      <div className="relative w-full aspect-[2/3] bg-slate-900 overflow-hidden">
+        {hasCover && cleanCoverUrl ? (
+          // A native image allows direct cover requests with no Referer header.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={cleanCoverUrl}
             alt={`Cover of ${title}`}
-            fill
-            className="object-cover transition-transform duration-300 group-hover:scale-105"
-            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 20vw"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
+            referrerPolicy="no-referrer"
+            loading="lazy"
+            className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            onError={() => setFailedUrl(cleanCoverUrl)}
           />
         ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-3 text-slate-400">
-            <BookOpen className="w-10 h-10 mb-2 opacity-50" />
-            <span className="text-xs text-center font-medium line-clamp-3 opacity-70">{title}</span>
+          <div className="absolute inset-0 flex flex-col justify-between p-3.5 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-slate-100 select-none overflow-hidden">
+            {/* Ambient subtle glow */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(139,92,246,0.18),transparent_65%)] pointer-events-none" />
+            <div className="absolute -left-1 inset-y-0 w-1.5 bg-violet-500/50 rounded-r" />
+
+            {/* Spacer for overlay availability badge */}
+            <div className="h-6" aria-hidden="true" />
+
+            {/* Center: Book icon + title + primary author */}
+            <div className="relative z-10 flex flex-col items-center justify-center my-auto py-1 text-center">
+              <div className="flex items-center justify-center w-11 h-11 rounded-xl bg-violet-500/15 border border-violet-500/25 text-violet-300 mb-2 shadow-inner group-hover:scale-110 transition-transform duration-300">
+                <BookOpen className="w-5 h-5" aria-hidden="true" />
+              </div>
+              <span className="text-xs font-bold text-slate-100 text-center leading-snug line-clamp-3 px-1">
+                {title}
+              </span>
+              {authors.length > 0 && (
+                <span className="text-[10px] text-slate-400 text-center line-clamp-1 mt-1 font-medium">
+                  {authors[0]}
+                </span>
+              )}
+            </div>
+
+            {/* Bottom metadata hint */}
+            <div className="relative z-10 flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1.5 border-t border-slate-700/60">
+              <span className="tracking-wider">{publishedYear}</span>
+              <span className="uppercase tracking-wider font-semibold text-violet-400">
+                {language.slice(0, 3)}
+              </span>
+            </div>
           </div>
         )}
 
         {/* Availability pill — overlaid on cover */}
-        <div className="absolute top-2 left-2">
+        <div className="absolute top-2 left-2 z-20">
           <span
             className={cn(
-              'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold backdrop-blur-sm border',
+              'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold backdrop-blur-sm border shadow-sm',
               availability === 'available'
-                ? 'bg-emerald-100/90 text-emerald-700 border-emerald-200 dark:bg-emerald-900/70 dark:text-emerald-300 dark:border-emerald-700'
-                : 'bg-amber-100/90 text-amber-700 border-amber-200 dark:bg-amber-900/70 dark:text-amber-300 dark:border-amber-700'
+                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                : 'bg-amber-950/80 text-amber-300 border-amber-500/40'
             )}
           >
             <span
               className={cn(
                 'w-1.5 h-1.5 rounded-full',
-                availability === 'available' ? 'bg-emerald-500' : 'bg-amber-500'
+                availability === 'available' ? 'bg-emerald-400' : 'bg-amber-400'
               )}
               aria-hidden="true"
             />
@@ -78,14 +109,19 @@ export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardPr
         </div>
 
         {/* Quick actions — visible on hover */}
-        <div className="absolute inset-x-0 bottom-0 flex gap-1 p-2 bg-gradient-to-t from-black/70 to-transparent translate-y-full group-hover:translate-y-0 transition-transform duration-200">
+        <div className="absolute inset-x-0 bottom-0 z-20 flex gap-1 p-2 bg-gradient-to-t from-black/80 via-black/50 to-transparent translate-y-full group-hover:translate-y-0 transition-transform duration-200">
           <button
             id={`issue-book-${book.id}`}
             onClick={() => onIssue(book)}
-            aria-label={`Issue "${title}"`}
-            className="flex-1 py-1.5 text-xs font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white min-h-[36px]"
+            aria-label={`${availability === 'available' ? 'Issue' : 'Return'} "${title}"`}
+            className={cn(
+              'flex-1 py-1.5 text-xs font-semibold text-white rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white min-h-[36px]',
+              availability === 'available'
+                ? 'bg-violet-600 hover:bg-violet-700'
+                : 'bg-amber-600 hover:bg-amber-700'
+            )}
           >
-            Issue
+            {availability === 'available' ? 'Issue' : 'Return'}
           </button>
           <button
             id={`edit-book-${book.id}`}

@@ -8,6 +8,7 @@ import BottomNav from '@/app/components/BottomNav';
 import BookCard from '@/app/components/BookCard';
 import FilterPills from '@/app/components/FilterPills';
 import AddBookModal from '@/app/components/AddBookModal';
+import EditBookModal from '@/app/components/EditBookModal';
 import { bookSelect, mapBookRowToBook, supabase, type BookRow } from '@/app/lib/supabase';
 import type { Book } from '@/app/lib/types';
 
@@ -88,37 +89,62 @@ export default function CatalogPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeGenre, setActiveGenre] = useState('All');
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editingBook, setEditingBook] = useState<Book | null>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
 
   const loadBooks = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
-
     const { data, error } = await supabase
       .from('books')
       .select(bookSelect)
       .order('created_at', { ascending: false });
 
     if (error) {
-      setBooks([]);
       setLoadError(error.message);
-      setIsLoading(false);
       return;
     }
 
     try {
       setBooks(((data ?? []) as unknown as BookRow[]).map(mapBookRowToBook));
+      setLoadError(null);
     } catch (mappingError) {
-      setBooks([]);
       setLoadError(mappingError instanceof Error ? mappingError.message : 'Unable to map the catalog data.');
-    } finally {
-      setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadBooks();
-  }, [loadBooks]);
+    let isMounted = true;
+
+    async function fetchInitial() {
+      const { data, error } = await supabase
+        .from('books')
+        .select(bookSelect)
+        .order('created_at', { ascending: false });
+
+      if (!isMounted) return;
+
+      if (error) {
+        setBooks([]);
+        setLoadError(error.message);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        setBooks(((data ?? []) as unknown as BookRow[]).map(mapBookRowToBook));
+      } catch (mappingError) {
+        setBooks([]);
+        setLoadError(mappingError instanceof Error ? mappingError.message : 'Unable to map the catalog data.');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    void fetchInitial();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -129,14 +155,12 @@ export default function CatalogPage() {
     [books],
   );
 
-  useEffect(() => {
-    if (activeGenre !== 'All' && !genres.includes(activeGenre)) setActiveGenre('All');
-  }, [activeGenre, genres]);
+  const effectiveGenre = activeGenre !== 'All' && !genres.includes(activeGenre) ? 'All' : activeGenre;
 
   const filteredBooks = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
     return books.filter((book) => {
-      if (activeGenre !== 'All' && !book.genres.includes(activeGenre)) return false;
+      if (effectiveGenre !== 'All' && !book.genres.includes(effectiveGenre)) return false;
       if (!query) return true;
       return (
         book.title.toLowerCase().includes(query) ||
@@ -145,7 +169,7 @@ export default function CatalogPage() {
         (book.subtitle?.toLowerCase().includes(query) ?? false)
       );
     });
-  }, [activeGenre, books, searchQuery]);
+  }, [effectiveGenre, books, searchQuery]);
 
   const stats = useMemo(() => ({
     total: books.reduce((total, book) => total + book.copies, 0),
@@ -177,7 +201,7 @@ export default function CatalogPage() {
   }, [loadBooks]);
 
   const handleEditBook = useCallback((book: Book) => {
-    console.log('Edit book:', book.id);
+    setEditingBook(book);
   }, []);
 
   return (
@@ -231,7 +255,7 @@ export default function CatalogPage() {
             <StatCard label="Genres" value={stats.genres} icon={Users2} accent="bg-blue-500" />
           </div>
 
-          <FilterPills genres={genres} activeGenre={activeGenre} onGenreChange={setActiveGenre} />
+          <FilterPills genres={genres} activeGenre={effectiveGenre} onGenreChange={setActiveGenre} />
 
           <button
             id="mobile-search-trigger"
@@ -297,6 +321,14 @@ export default function CatalogPage() {
         isOpen={addModalOpen}
         onClose={() => setAddModalOpen(false)}
         onBookCreated={loadBooks}
+        existingGenres={genres}
+      />
+
+      <EditBookModal
+        isOpen={Boolean(editingBook)}
+        book={editingBook}
+        onClose={() => setEditingBook(null)}
+        onBookUpdated={loadBooks}
         existingGenres={genres}
       />
     </div>

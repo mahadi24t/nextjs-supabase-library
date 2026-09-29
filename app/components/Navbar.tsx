@@ -1,7 +1,6 @@
 'use client';
 
 import { Sun, Moon, Search, Bell, Library } from 'lucide-react';
-import { cn } from '@/app/lib/utils';
 
 interface NavbarProps {
   darkMode: boolean;

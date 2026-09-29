@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { X, Search, Plus, Tag, LoaderCircle } from 'lucide-react';
-import { supabase, toBookInsert, toShelfLocationInsert } from '@/app/lib/supabase';
+import { createBook, updateBook } from '@/app/lib/supabase';
 import { cn } from '@/app/lib/utils';
-import type { AddBookFormData } from '@/app/lib/types';
+import type { AddBookFormData, Book } from '@/app/lib/types';
 
 const INITIAL_FORM: AddBookFormData = {
   title: '',
@@ -24,102 +24,46 @@ const INITIAL_FORM: AddBookFormData = {
 
 const LANGUAGES = ['English', 'Bengali', 'Arabic', 'French', 'German', 'Spanish', 'Urdu'];
 
-function uniqueNames(values: string[]): string[] {
-  const seen = new Set<string>();
-
-  return values.reduce<string[]>((names, value) => {
-    const name = value.trim();
-    const key = name.toLocaleLowerCase();
-    if (name && !seen.has(key)) {
-      seen.add(key);
-      names.push(name);
-    }
-    return names;
-  }, []);
-}
-
-async function linkAuthors(bookId: string, names: string[]) {
-  if (!names.length) return;
-
-  const { error: authorUpsertError } = await supabase
-    .from('authors')
-    .upsert(names.map((name) => ({ name })), { onConflict: 'name' });
-  if (authorUpsertError) throw authorUpsertError;
-
-  const { data: authors, error: authorsError } = await supabase
-    .from('authors')
-    .select('id, name')
-    .in('name', names);
-  if (authorsError) throw authorsError;
-
-  const savedAuthors = (authors ?? []) as Array<{ id: string; name: string }>;
-  const authorIds = new Map(
-    savedAuthors.map((author) => [
-      author.name.toLocaleLowerCase(),
-      author.id,
-    ]),
-  );
-
-  const links = names.map((name, author_order) => {
-    const author_id = authorIds.get(name.toLocaleLowerCase());
-    if (!author_id) throw new Error(`Could not find author "${name}" after saving it.`);
-    return { book_id: bookId, author_id, author_order };
-  });
-
-  const { error: linkError } = await supabase
-    .from('book_authors')
-    .upsert(links, { onConflict: 'book_id,author_id' });
-  if (linkError) throw linkError;
-}
-
-async function linkGenres(bookId: string, names: string[]) {
-  if (!names.length) return;
-
-  const { error: genreUpsertError } = await supabase
-    .from('genres')
-    .upsert(names.map((name) => ({ name })), { onConflict: 'name' });
-  if (genreUpsertError) throw genreUpsertError;
-
-  const { data: genres, error: genresError } = await supabase
-    .from('genres')
-    .select('id, name')
-    .in('name', names);
-  if (genresError) throw genresError;
-
-  const savedGenres = (genres ?? []) as Array<{ id: string; name: string }>;
-  const genreIds = new Map(
-    savedGenres.map((genre) => [
-      genre.name.toLocaleLowerCase(),
-      genre.id,
-    ]),
-  );
-
-  const links = names.map((name, genre_order) => {
-    const genre_id = genreIds.get(name.toLocaleLowerCase());
-    if (!genre_id) throw new Error(`Could not find genre "${name}" after saving it.`);
-    return { book_id: bookId, genre_id, genre_order };
-  });
-
-  const { error: linkError } = await supabase
-    .from('book_genres')
-    .upsert(links, { onConflict: 'book_id,genre_id' });
-  if (linkError) throw linkError;
-}
-
-interface AddBookModalProps {
+export interface AddBookModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onBookCreated: () => Promise<void> | void;
+  onBookCreated?: () => Promise<void> | void;
+  onBookSaved?: () => Promise<void> | void;
   existingGenres: string[];
+  bookToEdit?: Book | null;
 }
 
-export default function AddBookModal({
-  isOpen,
+function BookModalContent({
   onClose,
   onBookCreated,
+  onBookSaved,
   existingGenres,
-}: AddBookModalProps) {
-  const [form, setForm] = useState<AddBookFormData>(INITIAL_FORM);
+  bookToEdit,
+}: Omit<AddBookModalProps, 'isOpen'>) {
+  const isEditing = Boolean(bookToEdit);
+
+  const initialFormData = useMemo<AddBookFormData>(() => {
+    if (bookToEdit) {
+      return {
+        title: bookToEdit.title,
+        subtitle: bookToEdit.subtitle ?? '',
+        authors: [...bookToEdit.authors],
+        language: bookToEdit.language,
+        isTranslated: bookToEdit.isTranslated,
+        originalLanguage: bookToEdit.originalLanguage ?? 'English',
+        genres: [...bookToEdit.genres],
+        shelf: bookToEdit.location.shelf,
+        row: bookToEdit.location.row,
+        slot: bookToEdit.location.slot,
+        copies: bookToEdit.copies,
+        publishedYear: bookToEdit.publishedYear,
+        coverUrl: bookToEdit.coverUrl ?? '',
+      };
+    }
+    return INITIAL_FORM;
+  }, [bookToEdit]);
+
+  const [form, setForm] = useState<AddBookFormData>(initialFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -129,55 +73,63 @@ export default function AddBookModal({
   // Genre state
   const [genreSearch, setGenreSearch] = useState('');
   const [showGenreDropdown, setShowGenreDropdown] = useState(false);
-  const [allGenres, setAllGenres] = useState<string[]>(existingGenres);
+  const [customGenres, setCustomGenres] = useState<string[]>([]);
 
   const overlayRef = useRef<HTMLDivElement>(null);
   const firstFocusRef = useRef<HTMLInputElement>(null);
   const genreInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync external genres
-  useEffect(() => {
-    setAllGenres(existingGenres);
-  }, [existingGenres]);
+  const allGenres = useMemo(() => {
+    return Array.from(new Set([...existingGenres, ...customGenres])).sort((a, b) =>
+      a.localeCompare(b),
+    );
+  }, [existingGenres, customGenres]);
 
-  // Focus trap + reset
+  const availableLanguages = useMemo(() => {
+    const list = [...LANGUAGES];
+    if (form.language && !list.includes(form.language)) list.push(form.language);
+    if (form.originalLanguage && !list.includes(form.originalLanguage)) list.push(form.originalLanguage);
+    return list;
+  }, [form.language, form.originalLanguage]);
+
+  // Focus on title input when modal mounts
   useEffect(() => {
-    if (isOpen) {
-      setForm(INITIAL_FORM);
-      setAuthorInput('');
-      setGenreSearch('');
-      setSubmitError(null);
-      setTimeout(() => firstFocusRef.current?.focus(), 50);
-    }
-  }, [isOpen]);
+    const timeout = setTimeout(() => firstFocusRef.current?.focus(), 50);
+    return () => clearTimeout(timeout);
+  }, []);
 
   // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) onClose();
+      if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [isOpen, onClose]);
+  }, [onClose]);
 
   // Prevent body scroll when open
   useEffect(() => {
-    document.body.style.overflow = isOpen ? 'hidden' : '';
-    return () => { document.body.style.overflow = ''; };
-  }, [isOpen]);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
 
   const handleBackdropClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === overlayRef.current) onClose();
     },
-    [onClose]
+    [onClose],
   );
 
   // Author tag management
   const addAuthor = useCallback(() => {
     const trimmed = authorInput.trim();
-    if (trimmed && !form.authors.includes(trimmed)) {
-      setForm((f) => ({ ...f, authors: [...f.authors, trimmed] }));
+    if (trimmed) {
+      const lower = trimmed.toLocaleLowerCase();
+      if (!form.authors.some((a) => a.toLocaleLowerCase() === lower)) {
+        setForm((f) => ({ ...f, authors: [...f.authors, trimmed] }));
+      }
     }
     setAuthorInput('');
   }, [authorInput, form.authors]);
@@ -190,7 +142,7 @@ export default function AddBookModal({
   const filteredGenres = allGenres.filter(
     (g) =>
       g.toLowerCase().includes(genreSearch.toLowerCase()) &&
-      !form.genres.includes(g)
+      !form.genres.includes(g),
   );
 
   const addGenre = useCallback(
@@ -198,7 +150,7 @@ export default function AddBookModal({
       const trimmed = genre.trim();
       if (!trimmed) return;
       if (!allGenres.includes(trimmed)) {
-        setAllGenres((prev) => [...prev, trimmed]);
+        setCustomGenres((prev) => [...prev, trimmed]);
       }
       if (!form.genres.includes(trimmed)) {
         setForm((f) => ({ ...f, genres: [...f.genres, trimmed] }));
@@ -206,7 +158,7 @@ export default function AddBookModal({
       setGenreSearch('');
       setShowGenreDropdown(false);
     },
-    [allGenres, form.genres]
+    [allGenres, form.genres],
   );
 
   const removeGenre = useCallback((genre: string) => {
@@ -220,37 +172,34 @@ export default function AddBookModal({
     setIsSubmitting(true);
     setSubmitError(null);
 
+    // UX FIX: Automatically trim and commit uncommitted text remaining in author input
+    const pendingAuthor = authorInput.trim();
+    let authorsToSave = [...form.authors];
+    if (pendingAuthor) {
+      const lowerPending = pendingAuthor.toLocaleLowerCase();
+      if (!authorsToSave.some((a) => a.toLocaleLowerCase() === lowerPending)) {
+        authorsToSave = [...authorsToSave, pendingAuthor];
+      }
+    }
+
+    const finalFormData: AddBookFormData = {
+      ...form,
+      authors: authorsToSave,
+    };
+
     try {
-      const { data: location, error: locationError } = await supabase
-        .from('shelf_locations')
-        .upsert(toShelfLocationInsert(form), {
-          onConflict: 'shelf_code,row_label,slot_label',
-        })
-        .select('id')
-        .single();
-
-      if (locationError) throw locationError;
-      if (!location || typeof location.id !== 'string') {
-        throw new Error('Supabase did not return the saved shelf location.');
+      if (bookToEdit) {
+        await updateBook(bookToEdit.id, finalFormData, bookToEdit);
+      } else {
+        await createBook(finalFormData);
       }
 
-      const { data: book, error: bookError } = await supabase
-        .from('books')
-        .insert({ ...toBookInsert(form), shelf_location_id: location.id })
-        .select('id')
-        .single();
-
-      if (bookError) throw bookError;
-      if (!book || typeof book.id !== 'string') {
-        throw new Error('Supabase did not return the saved book.');
+      if (onBookSaved) {
+        await onBookSaved();
       }
-
-      const authorNames = uniqueNames(form.authors.length ? form.authors : ['Unknown']);
-      const genreNames = uniqueNames(form.genres);
-
-      await linkAuthors(book.id, authorNames);
-      await linkGenres(book.id, genreNames);
-      await onBookCreated();
+      if (onBookCreated) {
+        await onBookCreated();
+      }
       onClose();
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Unable to save the book.');
@@ -259,29 +208,25 @@ export default function AddBookModal({
     }
   };
 
-  if (!isOpen) return null;
-
   const inputClass =
     'w-full px-3 py-2 text-sm rounded-lg bg-slate-100 dark:bg-slate-700 border border-transparent focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none text-slate-900 dark:text-slate-100 placeholder:text-slate-400 transition-all';
 
   const labelClass = 'block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5';
 
   return (
-    /* Overlay */
     <div
       ref={overlayRef}
       onClick={handleBackdropClick}
       className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm p-0 md:p-4"
       aria-modal="true"
       role="dialog"
-      aria-labelledby="add-book-modal-title"
+      aria-labelledby="book-modal-title"
     >
-      {/* Panel — bottom sheet on mobile, centered dialog on desktop */}
       <div
         className={cn(
           'w-full md:max-w-lg bg-white dark:bg-slate-800 shadow-2xl flex flex-col',
           'rounded-t-2xl md:rounded-2xl',
-          'max-h-[92dvh] md:max-h-[90dvh]'
+          'max-h-[92dvh] md:max-h-[90dvh]',
         )}
       >
         {/* Grab handle (mobile only) */}
@@ -291,15 +236,22 @@ export default function AddBookModal({
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700 shrink-0">
-          <h2
-            id="add-book-modal-title"
-            className="text-lg font-bold text-slate-900 dark:text-slate-100"
-          >
-            Add Book
-          </h2>
+          <div>
+            <h2
+              id="book-modal-title"
+              className="text-lg font-bold text-slate-900 dark:text-slate-100"
+            >
+              {isEditing ? 'Edit Book' : 'Add Book'}
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {isEditing
+                ? 'Update book metadata, placement, and copies in your catalog.'
+                : 'Catalog a new volume with physical shelf placement and tags.'}
+            </p>
+          </div>
           <button
             onClick={onClose}
-            aria-label="Close add book modal"
+            aria-label={isEditing ? 'Close edit book modal' : 'Close add book modal'}
             disabled={isSubmitting}
             className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
           >
@@ -309,7 +261,7 @@ export default function AddBookModal({
 
         {/* Scrollable form */}
         <form
-          id="add-book-form"
+          id="book-form"
           onSubmit={handleSubmit}
           className="flex flex-col gap-4 overflow-y-auto p-5 flex-1"
           noValidate
@@ -410,7 +362,7 @@ export default function AddBookModal({
                 onChange={(e) => setForm((f) => ({ ...f, language: e.target.value }))}
                 className={inputClass}
               >
-                {LANGUAGES.map((lang) => (
+                {availableLanguages.map((lang) => (
                   <option key={lang} value={lang}>
                     {lang}
                   </option>
@@ -427,13 +379,13 @@ export default function AddBookModal({
                 onClick={() => setForm((f) => ({ ...f, isTranslated: !f.isTranslated }))}
                 className={cn(
                   'relative w-11 h-6 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
-                  form.isTranslated ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-600'
+                  form.isTranslated ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-600',
                 )}
               >
                 <span
                   className={cn(
                     'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200',
-                    form.isTranslated && 'translate-x-5'
+                    form.isTranslated && 'translate-x-5',
                   )}
                 />
               </button>
@@ -452,7 +404,7 @@ export default function AddBookModal({
                 onChange={(e) => setForm((f) => ({ ...f, originalLanguage: e.target.value }))}
                 className={inputClass}
               >
-                {LANGUAGES.map((lang) => (
+                {availableLanguages.map((lang) => (
                   <option key={lang} value={lang}>
                     {lang}
                   </option>
@@ -650,7 +602,7 @@ export default function AddBookModal({
         <div className="flex gap-3 px-5 py-4 border-t border-slate-200 dark:border-slate-700 shrink-0">
           <button
             type="submit"
-            form="add-book-form"
+            form="book-form"
             id="save-book-btn"
             disabled={!form.title.trim() || isSubmitting}
             className="flex-1 py-2.5 px-5 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 min-h-[44px]"
@@ -658,10 +610,10 @@ export default function AddBookModal({
             {isSubmitting ? (
               <span className="inline-flex items-center gap-2">
                 <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-                Saving…
+                {isEditing ? 'Saving Changes…' : 'Saving…'}
               </span>
             ) : (
-              'Save Book'
+              isEditing ? 'Save Changes' : 'Save Book'
             )}
           </button>
           <button
@@ -677,4 +629,9 @@ export default function AddBookModal({
       </div>
     </div>
   );
+}
+
+export default function AddBookModal(props: AddBookModalProps) {
+  if (!props.isOpen) return null;
+  return <BookModalContent key={props.bookToEdit?.id ?? 'create'} {...props} />;
 }
