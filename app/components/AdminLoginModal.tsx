@@ -103,7 +103,7 @@ function AdminLoginModalContent() {
                 id="admin-passcode"
                 ref={inputRef}
                 type={showPassword ? 'text' : 'password'}
-                placeholder="Enter password (default: admin123)"
+                placeholder="Enter librarian passcode..."
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
