@@ -42,3 +42,57 @@ export interface AddBookFormData {
   publishedYear: number;
   coverUrl: string;
 }
+
+export type MemberStatus = 'active' | 'suspended';
+
+export interface Member {
+  id: string;
+  memberCode: string;
+  fullName: string;
+  email: string | null;
+  phone: string | null;
+  status: MemberStatus;
+  createdAt: string;
+  activeLoansCount?: number;
+}
+
+export interface MemberFormData {
+  memberCode: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  status: MemberStatus;
+}
+
+export type BookIssueStatus = 'active' | 'returned' | 'overdue';
+
+export interface BookIssue {
+  id: string;
+  bookId: string;
+  memberId: string;
+  issuedAt: string;
+  dueDate: string;
+  returnedAt: string | null;
+  status: BookIssueStatus;
+  notes?: string;
+  book?: {
+    id: string;
+    title: string;
+    coverUrl?: string;
+    authors: string[];
+  };
+  member?: {
+    id: string;
+    memberCode: string;
+    fullName: string;
+    email: string | null;
+    phone: string | null;
+  };
+}
+
+export interface CreateIssueFormData {
+  bookId: string;
+  memberId: string;
+  dueDate: string;
+  notes?: string;
+}

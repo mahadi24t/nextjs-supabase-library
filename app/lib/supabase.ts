@@ -1,5 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
-import type { AddBookFormData, Book, BookAvailability, ShelfLocation } from '@/app/lib/types';
+import type {
+  AddBookFormData,
+  Book,
+  BookAvailability,
+  ShelfLocation,
+  Member,
+  MemberFormData,
+  BookIssue,
+  BookIssueStatus,
+  CreateIssueFormData,
+} from '@/app/lib/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -316,4 +326,249 @@ export async function updateBook(
   await syncBookAuthors(bookId, data.authors);
   await syncBookGenres(bookId, data.genres);
 }
+
+// ============================================================================
+// MEMBERS MODULE OPERATIONS
+// ============================================================================
+
+export interface MemberRow {
+  id: string;
+  member_code: string;
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+  status: 'active' | 'suspended';
+  created_at: string;
+  book_issues?: Array<{ id: string; status: string }>;
+}
+
+export function mapMemberRowToMember(row: MemberRow): Member {
+  const activeLoansCount = Array.isArray(row.book_issues)
+    ? row.book_issues.filter((issue) => issue.status === 'active' || issue.status === 'overdue').length
+    : 0;
+
+  return {
+    id: row.id,
+    memberCode: row.member_code,
+    fullName: row.full_name,
+    email: row.email,
+    phone: row.phone,
+    status: row.status,
+    createdAt: row.created_at,
+    activeLoansCount,
+  };
+}
+
+export async function fetchMembers(): Promise<Member[]> {
+  const { data, error } = await supabase
+    .from('members')
+    .select('id, member_code, full_name, email, phone, status, created_at, book_issues (id, status)')
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return ((data ?? []) as unknown as MemberRow[]).map(mapMemberRowToMember);
+}
+
+export async function createMember(data: MemberFormData): Promise<Member> {
+  const insertPayload = {
+    member_code: data.memberCode.trim().toUpperCase(),
+    full_name: data.fullName.trim(),
+    email: data.email.trim() || null,
+    phone: data.phone.trim() || null,
+    status: data.status,
+  };
+
+  const { data: member, error } = await supabase
+    .from('members')
+    .insert(insertPayload)
+    .select('id, member_code, full_name, email, phone, status, created_at')
+    .single();
+
+  if (error) throw error;
+  if (!member) throw new Error('Supabase did not return the created member.');
+
+  return {
+    id: member.id,
+    memberCode: member.member_code,
+    fullName: member.full_name,
+    email: member.email,
+    phone: member.phone,
+    status: member.status,
+    createdAt: member.created_at,
+    activeLoansCount: 0,
+  };
+}
+
+export async function updateMember(id: string, data: MemberFormData): Promise<void> {
+  const updatePayload = {
+    member_code: data.memberCode.trim().toUpperCase(),
+    full_name: data.fullName.trim(),
+    email: data.email.trim() || null,
+    phone: data.phone.trim() || null,
+    status: data.status,
+  };
+
+  const { error } = await supabase
+    .from('members')
+    .update(updatePayload)
+    .eq('id', id);
+
+  if (error) throw error;
+}
+
+export async function deleteMember(id: string): Promise<void> {
+  const { data: issues, error: checkError } = await supabase
+    .from('book_issues')
+    .select('id, status')
+    .eq('member_id', id)
+    .in('status', ['active', 'overdue']);
+
+  if (!checkError && issues && issues.length > 0) {
+    throw new Error(`Cannot delete member with ${issues.length} active/overdue book loan(s).`);
+  }
+
+  const { error } = await supabase
+    .from('members')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw error;
+}
+
+// ============================================================================
+// CIRCULATION MODULE OPERATIONS (BOOK ISSUES / LOANS)
+// ============================================================================
+
+export interface BookIssueRow {
+  id: string;
+  book_id: string;
+  member_id: string;
+  issued_at: string;
+  due_date: string;
+  returned_at: string | null;
+  status: 'active' | 'returned' | 'overdue';
+  notes: string | null;
+  books?: {
+    id: string;
+    title: string;
+    cover_url: string | null;
+    book_authors?: Array<{ authors: { name: string } | null }>;
+  } | null;
+  members?: {
+    id: string;
+    member_code: string;
+    full_name: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
+}
+
+export function mapBookIssueRowToIssue(row: BookIssueRow): BookIssue {
+  const now = new Date();
+  const dueDate = new Date(row.due_date);
+  let status: BookIssueStatus = row.status;
+  if (!row.returned_at && status === 'active' && now > dueDate) {
+    status = 'overdue';
+  }
+
+  const authors = row.books?.book_authors?.flatMap((ba) => (ba.authors?.name ? [ba.authors.name] : [])) ?? [];
+
+  return {
+    id: row.id,
+    bookId: row.book_id,
+    memberId: row.member_id,
+    issuedAt: row.issued_at,
+    dueDate: row.due_date,
+    returnedAt: row.returned_at,
+    status,
+    notes: row.notes ?? undefined,
+    book: row.books
+      ? {
+          id: row.books.id,
+          title: row.books.title,
+          coverUrl: row.books.cover_url ?? undefined,
+          authors,
+        }
+      : undefined,
+    member: row.members
+      ? {
+          id: row.members.id,
+          memberCode: row.members.member_code,
+          fullName: row.members.full_name,
+          email: row.members.email,
+          phone: row.members.phone,
+        }
+      : undefined,
+  };
+}
+
+export const bookIssueSelect = `
+  id, book_id, member_id, issued_at, due_date, returned_at, status, notes,
+  books (id, title, cover_url, book_authors (authors (name))),
+  members (id, member_code, full_name, email, phone)
+`;
+
+export async function fetchBookIssues(): Promise<BookIssue[]> {
+  const { data, error } = await supabase
+    .from('book_issues')
+    .select(bookIssueSelect)
+    .order('issued_at', { ascending: false });
+
+  if (error) throw error;
+  return ((data ?? []) as unknown as BookIssueRow[]).map(mapBookIssueRowToIssue);
+}
+
+export async function createBookIssue(data: CreateIssueFormData): Promise<string> {
+  const insertPayload = {
+    book_id: data.bookId,
+    member_id: data.memberId,
+    due_date: new Date(data.dueDate).toISOString(),
+    status: 'active' as const,
+    notes: data.notes?.trim() || null,
+  };
+
+  const { data: issue, error: issueError } = await supabase
+    .from('book_issues')
+    .insert(insertPayload)
+    .select('id')
+    .single();
+
+  if (issueError) throw issueError;
+  if (!issue || typeof issue.id !== 'string') {
+    throw new Error('Supabase did not return the created issue ID.');
+  }
+
+  // Update book availability to issued
+  const { error: bookError } = await supabase
+    .from('books')
+    .update({ availability: 'issued' })
+    .eq('id', data.bookId);
+
+  if (bookError) throw bookError;
+
+  return issue.id;
+}
+
+export async function returnBookIssue(issueId: string, bookId: string): Promise<void> {
+  const now = new Date().toISOString();
+
+  const { error: issueError } = await supabase
+    .from('book_issues')
+    .update({
+      returned_at: now,
+      status: 'returned',
+    })
+    .eq('id', issueId);
+
+  if (issueError) throw issueError;
+
+  // Toggle book availability back to available
+  const { error: bookError } = await supabase
+    .from('books')
+    .update({ availability: 'available' })
+    .eq('id', bookId);
+
+  if (bookError) throw bookError;
+}
+
 
