@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { X, Search, Plus, Tag } from 'lucide-react';
+import { X, Search, Plus, Tag, LoaderCircle } from 'lucide-react';
+import { supabase, toBookInsert, toShelfLocationInsert } from '@/app/lib/supabase';
 import { cn } from '@/app/lib/utils';
 import type { AddBookFormData } from '@/app/lib/types';
 
@@ -23,20 +24,104 @@ const INITIAL_FORM: AddBookFormData = {
 
 const LANGUAGES = ['English', 'Bengali', 'Arabic', 'French', 'German', 'Spanish', 'Urdu'];
 
+function uniqueNames(values: string[]): string[] {
+  const seen = new Set<string>();
+
+  return values.reduce<string[]>((names, value) => {
+    const name = value.trim();
+    const key = name.toLocaleLowerCase();
+    if (name && !seen.has(key)) {
+      seen.add(key);
+      names.push(name);
+    }
+    return names;
+  }, []);
+}
+
+async function linkAuthors(bookId: string, names: string[]) {
+  if (!names.length) return;
+
+  const { error: authorUpsertError } = await supabase
+    .from('authors')
+    .upsert(names.map((name) => ({ name })), { onConflict: 'name' });
+  if (authorUpsertError) throw authorUpsertError;
+
+  const { data: authors, error: authorsError } = await supabase
+    .from('authors')
+    .select('id, name')
+    .in('name', names);
+  if (authorsError) throw authorsError;
+
+  const savedAuthors = (authors ?? []) as Array<{ id: string; name: string }>;
+  const authorIds = new Map(
+    savedAuthors.map((author) => [
+      author.name.toLocaleLowerCase(),
+      author.id,
+    ]),
+  );
+
+  const links = names.map((name, author_order) => {
+    const author_id = authorIds.get(name.toLocaleLowerCase());
+    if (!author_id) throw new Error(`Could not find author "${name}" after saving it.`);
+    return { book_id: bookId, author_id, author_order };
+  });
+
+  const { error: linkError } = await supabase
+    .from('book_authors')
+    .upsert(links, { onConflict: 'book_id,author_id' });
+  if (linkError) throw linkError;
+}
+
+async function linkGenres(bookId: string, names: string[]) {
+  if (!names.length) return;
+
+  const { error: genreUpsertError } = await supabase
+    .from('genres')
+    .upsert(names.map((name) => ({ name })), { onConflict: 'name' });
+  if (genreUpsertError) throw genreUpsertError;
+
+  const { data: genres, error: genresError } = await supabase
+    .from('genres')
+    .select('id, name')
+    .in('name', names);
+  if (genresError) throw genresError;
+
+  const savedGenres = (genres ?? []) as Array<{ id: string; name: string }>;
+  const genreIds = new Map(
+    savedGenres.map((genre) => [
+      genre.name.toLocaleLowerCase(),
+      genre.id,
+    ]),
+  );
+
+  const links = names.map((name, genre_order) => {
+    const genre_id = genreIds.get(name.toLocaleLowerCase());
+    if (!genre_id) throw new Error(`Could not find genre "${name}" after saving it.`);
+    return { book_id: bookId, genre_id, genre_order };
+  });
+
+  const { error: linkError } = await supabase
+    .from('book_genres')
+    .upsert(links, { onConflict: 'book_id,genre_id' });
+  if (linkError) throw linkError;
+}
+
 interface AddBookModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: AddBookFormData) => void;
+  onBookCreated: () => Promise<void> | void;
   existingGenres: string[];
 }
 
 export default function AddBookModal({
   isOpen,
   onClose,
-  onSave,
+  onBookCreated,
   existingGenres,
 }: AddBookModalProps) {
   const [form, setForm] = useState<AddBookFormData>(INITIAL_FORM);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Author tag input
   const [authorInput, setAuthorInput] = useState('');
@@ -61,6 +146,7 @@ export default function AddBookModal({
       setForm(INITIAL_FORM);
       setAuthorInput('');
       setGenreSearch('');
+      setSubmitError(null);
       setTimeout(() => firstFocusRef.current?.focus(), 50);
     }
   }, [isOpen]);
@@ -127,11 +213,50 @@ export default function AddBookModal({
     setForm((f) => ({ ...f, genres: f.genres.filter((g) => g !== genre) }));
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!form.title.trim()) return;
-    onSave(form);
-    onClose();
+    if (!form.title.trim() || isSubmitting) return;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const { data: location, error: locationError } = await supabase
+        .from('shelf_locations')
+        .upsert(toShelfLocationInsert(form), {
+          onConflict: 'shelf_code,row_label,slot_label',
+        })
+        .select('id')
+        .single();
+
+      if (locationError) throw locationError;
+      if (!location || typeof location.id !== 'string') {
+        throw new Error('Supabase did not return the saved shelf location.');
+      }
+
+      const { data: book, error: bookError } = await supabase
+        .from('books')
+        .insert({ ...toBookInsert(form), shelf_location_id: location.id })
+        .select('id')
+        .single();
+
+      if (bookError) throw bookError;
+      if (!book || typeof book.id !== 'string') {
+        throw new Error('Supabase did not return the saved book.');
+      }
+
+      const authorNames = uniqueNames(form.authors.length ? form.authors : ['Unknown']);
+      const genreNames = uniqueNames(form.genres);
+
+      await linkAuthors(book.id, authorNames);
+      await linkGenres(book.id, genreNames);
+      await onBookCreated();
+      onClose();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Unable to save the book.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -175,6 +300,7 @@ export default function AddBookModal({
           <button
             onClick={onClose}
             aria-label="Close add book modal"
+            disabled={isSubmitting}
             className="flex items-center justify-center w-8 h-8 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
           >
             <X className="w-4 h-4" />
@@ -183,6 +309,7 @@ export default function AddBookModal({
 
         {/* Scrollable form */}
         <form
+          id="add-book-form"
           onSubmit={handleSubmit}
           className="flex flex-col gap-4 overflow-y-auto p-5 flex-1"
           noValidate
@@ -203,6 +330,15 @@ export default function AddBookModal({
               className={inputClass}
             />
           </div>
+
+          {submitError && (
+            <p
+              role="alert"
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300"
+            >
+              {submitError}
+            </p>
+          )}
 
           {/* Subtitle */}
           <div>
@@ -514,17 +650,25 @@ export default function AddBookModal({
         <div className="flex gap-3 px-5 py-4 border-t border-slate-200 dark:border-slate-700 shrink-0">
           <button
             type="submit"
+            form="add-book-form"
             id="save-book-btn"
-            onClick={handleSubmit}
-            disabled={!form.title.trim()}
+            disabled={!form.title.trim() || isSubmitting}
             className="flex-1 py-2.5 px-5 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 min-h-[44px]"
           >
-            Save Book
+            {isSubmitting ? (
+              <span className="inline-flex items-center gap-2">
+                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                Saving…
+              </span>
+            ) : (
+              'Save Book'
+            )}
           </button>
           <button
             type="button"
             id="cancel-add-book-btn"
             onClick={onClose}
+            disabled={isSubmitting}
             className="px-5 py-2.5 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 min-h-[44px]"
           >
             Cancel
