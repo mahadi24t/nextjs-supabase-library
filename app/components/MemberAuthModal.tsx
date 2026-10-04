@@ -29,7 +29,7 @@ function MemberAuthModalContent({
   onClose,
   onSuccess,
 }: Omit<MemberAuthModalProps, 'isOpen'>) {
-  const { login } = useMemberAuth();
+  const { loginMember } = useMemberAuth();
   const [tab, setTab] = useState<Tab>('login');
 
   // Login state
@@ -90,7 +90,7 @@ function MemberAuthModalContent({
         setLoginError('Your membership is currently suspended. Please contact the librarian.');
         return;
       }
-      login(member);
+      loginMember(member);
       onSuccess?.();
       onClose();
     } catch (err) {
@@ -112,7 +112,7 @@ function MemberAuthModalContent({
         phone: regPhone || undefined,
       });
       setRegSuccess(true);
-      login(newMember);
+      loginMember(newMember);
       setTimeout(() => {
         onSuccess?.();
         onClose();

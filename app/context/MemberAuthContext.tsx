@@ -1,73 +1,80 @@
 'use client';
 
-import {
-  createContext,
-  useContext,
-  useCallback,
-  useSyncExternalStore,
-  ReactNode,
-} from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Member } from '@/app/lib/types';
-
-const STORAGE_KEY = 'libstack_current_member';
 
 interface MemberAuthContextType {
   currentMember: Member | null;
   isMemberLoggedIn: boolean;
+  loginMember: (member: Member) => void;
+  logoutMember: () => void;
+  /** Alias for loginMember */
   login: (member: Member) => void;
+  /** Alias for logoutMember */
   logout: () => void;
 }
 
-const MemberAuthContext = createContext<MemberAuthContextType | undefined>(undefined);
+const MemberAuthContext = createContext<MemberAuthContextType>({
+  currentMember: null,
+  isMemberLoggedIn: false,
+  loginMember: () => {},
+  logoutMember: () => {},
+  login: () => {},
+  logout: () => {},
+});
 
-function subscribeToMemberAuth(callback: () => void) {
-  if (typeof window === 'undefined') return () => {};
-  window.addEventListener('storage', callback);
-  window.addEventListener('libstack_member_auth_change', callback);
-  return () => {
-    window.removeEventListener('storage', callback);
-    window.removeEventListener('libstack_member_auth_change', callback);
-  };
-}
+const STORAGE_KEY = 'libstack_current_member';
+const AUTH_EVENT = 'libstack_member_auth_change';
 
-function getMemberSnapshot(): Member | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Member) : null;
-  } catch {
-    return null;
-  }
-}
+export function MemberAuthProvider({ children }: { children: React.ReactNode }) {
+  const [currentMember, setCurrentMember] = useState<Member | null>(null);
 
-function getServerMemberSnapshot(): Member | null {
-  return null;
-}
+  // Read member safely on client mount
+  useEffect(() => {
+    const syncMember = () => {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored) as Member;
+          setCurrentMember(parsed);
+        } else {
+          setCurrentMember(null);
+        }
+      } catch (err) {
+        console.error('Failed to parse member from localStorage', err);
+        localStorage.removeItem(STORAGE_KEY);
+        setCurrentMember(null);
+      }
+    };
 
-function dispatchMemberChange() {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('libstack_member_auth_change'));
-  }
-}
+    syncMember();
 
-export function MemberAuthProvider({ children }: { children: ReactNode }) {
-  const currentMember = useSyncExternalStore(
-    subscribeToMemberAuth,
-    getMemberSnapshot,
-    getServerMemberSnapshot,
-  );
+    window.addEventListener(AUTH_EVENT, syncMember);
+    window.addEventListener('storage', syncMember);
 
-  const login = useCallback((member: Member) => {
-    if (typeof window !== 'undefined') {
+    return () => {
+      window.removeEventListener(AUTH_EVENT, syncMember);
+      window.removeEventListener('storage', syncMember);
+    };
+  }, []);
+
+  const loginMember = useCallback((member: Member) => {
+    try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(member));
-      dispatchMemberChange();
+      setCurrentMember(member);
+      window.dispatchEvent(new Event(AUTH_EVENT));
+    } catch (err) {
+      console.error('Failed to save member', err);
     }
   }, []);
 
-  const logout = useCallback(() => {
-    if (typeof window !== 'undefined') {
+  const logoutMember = useCallback(() => {
+    try {
       localStorage.removeItem(STORAGE_KEY);
-      dispatchMemberChange();
+      setCurrentMember(null);
+      window.dispatchEvent(new Event(AUTH_EVENT));
+    } catch (err) {
+      console.error('Failed to clear member', err);
     }
   }, []);
 
@@ -75,9 +82,11 @@ export function MemberAuthProvider({ children }: { children: ReactNode }) {
     <MemberAuthContext.Provider
       value={{
         currentMember,
-        isMemberLoggedIn: currentMember !== null,
-        login,
-        logout,
+        isMemberLoggedIn: !!currentMember,
+        loginMember,
+        logoutMember,
+        login: loginMember,
+        logout: logoutMember,
       }}
     >
       {children}
@@ -86,9 +95,5 @@ export function MemberAuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function useMemberAuth() {
-  const context = useContext(MemberAuthContext);
-  if (!context) {
-    throw new Error('useMemberAuth must be used within a MemberAuthProvider');
-  }
-  return context;
+  return useContext(MemberAuthContext);
 }

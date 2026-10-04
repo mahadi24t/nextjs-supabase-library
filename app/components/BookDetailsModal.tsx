@@ -29,7 +29,7 @@ interface BookDetailsModalProps {
 }
 
 function BookDetailsModalContent({ book, onClose }: Omit<BookDetailsModalProps, 'isOpen' | 'book'> & { book: Book }) {
-  const { currentMember, isMemberLoggedIn, logout } = useMemberAuth();
+  const { currentMember, isMemberLoggedIn, logoutMember } = useMemberAuth();
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [requestNotes, setRequestNotes] = useState('');
@@ -231,7 +231,7 @@ function BookDetailsModalContent({ book, onClose }: Omit<BookDetailsModalProps, 
                     </div>
                   </div>
                   <button
-                    onClick={logout}
+                    onClick={logoutMember}
                     title="Sign out"
                     aria-label="Sign out of member session"
                     className="p-1.5 rounded-lg text-violet-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
