@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Sidebar from '@/app/components/Sidebar';
 import Navbar from '@/app/components/Navbar';
 import BottomNav from '@/app/components/BottomNav';
+import Footer from '@/app/components/Footer';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -47,9 +48,11 @@ export default function AppLayout({
           searchPlaceholder={searchPlaceholder}
         />
 
-        <main id="main-content" className="flex-1 px-4 md:px-6 py-5 pb-24 md:pb-8 space-y-6">
+        <main id="main-content" className="flex-1 px-4 md:px-6 py-5 pb-12 md:pb-8 space-y-6">
           {children}
         </main>
+
+        <Footer />
       </div>
 
       <BottomNav />

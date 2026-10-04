@@ -140,15 +140,19 @@ export interface LibrarianNotificationSummary {
     id: string;
     bookTitle: string;
     memberName: string;
+    memberCode: string;
     createdAt: string;
   }>;
   returnRequests: Array<{
     id: string;
     bookTitle: string;
     memberName: string;
+    memberCode: string;
     requestedAt: string;
   }>;
 }
+
+export type LibrarianNotifications = LibrarianNotificationSummary;
 
 export type MemberNotificationType =
   | 'request_approved'

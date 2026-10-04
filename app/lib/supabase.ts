@@ -952,14 +952,14 @@ interface RawNotificationRequestRow {
   id: string;
   created_at: string;
   books?: { title?: string | null } | null;
-  members?: { full_name?: string | null } | null;
+  members?: { full_name?: string | null; member_code?: string | null } | null;
 }
 
 interface RawNotificationIssueRow {
   id: string;
   return_requested_at?: string | null;
   books?: { title?: string | null } | null;
-  members?: { full_name?: string | null } | null;
+  members?: { full_name?: string | null; member_code?: string | null } | null;
 }
 
 /**
@@ -971,12 +971,12 @@ export async function fetchLibrarianNotificationSummary(): Promise<LibrarianNoti
   const [requestsRes, issuesRes] = await Promise.all([
     supabase
       .from('book_requests')
-      .select('id, created_at, books (title), members (full_name)')
+      .select('id, created_at, books (title), members (full_name, member_code)')
       .eq('status', 'pending')
       .order('created_at', { ascending: false }),
     supabase
       .from('book_issues')
-      .select('id, return_requested_at, books (title), members (full_name)')
+      .select('id, return_requested_at, books (title), members (full_name, member_code)')
       .eq('return_requested', true)
       .is('returned_at', null)
       .order('return_requested_at', { ascending: false }),
@@ -986,6 +986,7 @@ export async function fetchLibrarianNotificationSummary(): Promise<LibrarianNoti
     id: row.id,
     bookTitle: row.books?.title ?? 'Unknown Book',
     memberName: row.members?.full_name ?? 'Unknown Member',
+    memberCode: row.members?.member_code ?? 'MEM',
     createdAt: row.created_at,
   }));
 
@@ -993,6 +994,7 @@ export async function fetchLibrarianNotificationSummary(): Promise<LibrarianNoti
     id: row.id,
     bookTitle: row.books?.title ?? 'Unknown Book',
     memberName: row.members?.full_name ?? 'Unknown Member',
+    memberCode: row.members?.member_code ?? 'MEM',
     requestedAt: row.return_requested_at ?? new Date().toISOString(),
   }));
 
@@ -1020,18 +1022,21 @@ interface RawMemberIssueRow {
 
 /**
  * Fetches notification summary for an authenticated member:
- * - Decisions on their book requests (approved / rejected)
+ * - Decisions on their book requests (approved / rejected) in the last 7 days
  * - Due date warnings (<= 2 days) and overdue alerts on active loans
  */
 export async function fetchMemberNotificationSummary(
   memberId: string,
 ): Promise<MemberNotificationSummary> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
   const [requestsRes, issuesRes] = await Promise.all([
     supabase
       .from('book_requests')
       .select('id, status, updated_at, created_at, books (title)')
       .eq('member_id', memberId)
       .in('status', ['approved', 'rejected'])
+      .gte('created_at', sevenDaysAgo)
       .order('updated_at', { ascending: false })
       .limit(10),
     supabase

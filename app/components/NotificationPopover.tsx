@@ -197,7 +197,11 @@ export default function NotificationPopover({
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs text-neutral-900 dark:text-neutral-100 line-clamp-2">
-                          <span className="font-bold">{item.memberName}</span> submitted return for{' '}
+                          <span className="font-bold">{item.memberName}</span>{' '}
+                          <span className="font-mono text-[10px] px-1 py-0.5 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 font-semibold">
+                            {item.memberCode}
+                          </span>{' '}
+                          submitted return for{' '}
                           <span className="font-semibold text-purple-600 dark:text-purple-400">
                             &ldquo;{item.bookTitle}&rdquo;
                           </span>
@@ -234,7 +238,11 @@ export default function NotificationPopover({
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs text-neutral-900 dark:text-neutral-100 line-clamp-2">
-                          <span className="font-bold">{item.memberName}</span> requested{' '}
+                          <span className="font-bold">{item.memberName}</span>{' '}
+                          <span className="font-mono text-[10px] px-1 py-0.5 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 font-semibold">
+                            {item.memberCode}
+                          </span>{' '}
+                          requested{' '}
                           <span className="font-semibold text-purple-600 dark:text-purple-400">
                             &ldquo;{item.bookTitle}&rdquo;
                           </span>

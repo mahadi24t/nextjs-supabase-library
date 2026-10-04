@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Plus, Search, X, BarChart3, BookMarked, Users2, TrendingUp, LoaderCircle } from 'lucide-react';
+import { Plus, Search, X, BarChart3, BookMarked, Users2, TrendingUp, LoaderCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import Sidebar from '@/app/components/Sidebar';
 import Navbar from '@/app/components/Navbar';
 import BottomNav from '@/app/components/BottomNav';
+import Footer from '@/app/components/Footer';
 import BookCard from '@/app/components/BookCard';
 import FilterPills from '@/app/components/FilterPills';
 import AddBookModal from '@/app/components/AddBookModal';
@@ -13,6 +14,19 @@ import NewIssueModal from '@/app/components/NewIssueModal';
 import { useAuth } from '@/app/context/AuthContext';
 import { bookSelect, mapBookRowToBook, supabase, returnBookByBookId, type BookRow } from '@/app/lib/supabase';
 import type { Book } from '@/app/lib/types';
+
+function generatePageNumbers(current: number, total: number): (number | '...')[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, '...', total];
+  }
+  if (current >= total - 3) {
+    return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, '...', current - 1, current, current + 1, '...', total];
+}
 
 function StatCard({ label, value, icon: Icon, accent }: {
   label: string;
@@ -103,6 +117,10 @@ export default function CatalogPage() {
   const [issuingBook, setIssuingBook] = useState<Book | null>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
 
+  // Pagination state
+  const ITEMS_PER_PAGE = 24;
+  const [currentPage, setCurrentPage] = useState(1);
+
   const loadBooks = useCallback(async () => {
     const { data, error } = await supabase
       .from('books')
@@ -168,19 +186,40 @@ export default function CatalogPage() {
 
   const effectiveGenre = activeGenre !== 'All' && !genres.includes(activeGenre) ? 'All' : activeGenre;
 
+  // Reset page to 1 whenever search query or genre filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, effectiveGenre]);
+
   const filteredBooks = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
     return books.filter((book) => {
-      if (effectiveGenre !== 'All' && !book.genres.includes(effectiveGenre)) return false;
-      if (!query) return true;
-      return (
-        book.title.toLowerCase().includes(query) ||
-        book.authors.some((author) => author.toLowerCase().includes(query)) ||
-        (book.isbn?.toLowerCase().includes(query) ?? false) ||
-        (book.subtitle?.toLowerCase().includes(query) ?? false)
-      );
+      const matchesGenre =
+        effectiveGenre === 'All' ||
+        book.genres?.some((g) => g.toLowerCase() === effectiveGenre.toLowerCase());
+      if (!query) return matchesGenre;
+
+      const matchesTitle = book.title?.toLowerCase().includes(query);
+      const matchesAuthor = book.authors?.some((author) => author.toLowerCase().includes(query));
+      const matchesIsbn = book.isbn?.toLowerCase().includes(query);
+      const matchesSubtitle = book.subtitle?.toLowerCase().includes(query);
+
+      return matchesGenre && (matchesTitle || matchesAuthor || matchesIsbn || matchesSubtitle);
     });
   }, [effectiveGenre, books, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredBooks.length / ITEMS_PER_PAGE));
+
+  const paginatedBooks = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredBooks.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredBooks, currentPage]);
+
+  const handlePageChange = (page: number) => {
+    if (page < 1 || page > totalPages) return;
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const stats = useMemo(() => ({
     total: books.reduce((total, book) => total + book.copies, 0),
@@ -302,19 +341,77 @@ export default function CatalogPage() {
           {isLoading ? (
             <BookGridSkeleton />
           ) : filteredBooks.length > 0 ? (
-            <section aria-label="Book catalog grid">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                {filteredBooks.map((book) => (
-                  <BookCard
-                    key={book.id}
-                    book={book}
-                    onIssue={(selectedBook) => { void handleIssueBook(selectedBook); }}
-                    onEdit={handleEditBook}
-                    onDelete={(bookId) => { void handleDeleteBook(bookId); }}
-                  />
-                ))}
-              </div>
-            </section>
+            <>
+              <section aria-label="Book catalog grid">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                  {paginatedBooks.map((book) => (
+                    <BookCard
+                      key={book.id}
+                      book={book}
+                      onIssue={(selectedBook) => { void handleIssueBook(selectedBook); }}
+                      onEdit={handleEditBook}
+                      onDelete={(bookId) => { void handleDeleteBook(bookId); }}
+                    />
+                  ))}
+                </div>
+              </section>
+
+              {/* Pagination Controls UI */}
+              {totalPages > 1 && (
+                <div className="pt-6 pb-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-slate-200 dark:border-slate-800">
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    Showing <span className="font-semibold text-slate-800 dark:text-slate-200">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span>–
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{Math.min(currentPage * ITEMS_PER_PAGE, filteredBooks.length)}</span> of{' '}
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{filteredBooks.length}</span> books
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={currentPage === 1}
+                      aria-label="Previous page"
+                      className="inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none transition cursor-pointer text-xs font-medium"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span className="hidden sm:inline ml-1">Previous</span>
+                    </button>
+
+                    {/* Numerical page buttons */}
+                    <div className="flex items-center gap-1">
+                      {generatePageNumbers(currentPage, totalPages).map((pageNum, idx) =>
+                        pageNum === '...' ? (
+                          <span key={`ellipsis-${idx}`} className="px-2 py-1 text-xs text-slate-400 select-none">
+                            …
+                          </span>
+                        ) : (
+                          <button
+                            key={pageNum}
+                            onClick={() => handlePageChange(pageNum as number)}
+                            className={`w-8 h-8 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center justify-center ${
+                              currentPage === pageNum
+                                ? 'bg-violet-600 text-white shadow-md shadow-violet-600/30'
+                                : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        ),
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                      aria-label="Next page"
+                      className="inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none transition cursor-pointer text-xs font-medium"
+                    >
+                      <span className="hidden sm:inline mr-1">Next</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <BookMarked className="w-12 h-12 text-slate-300 dark:text-slate-600 mb-3" />
@@ -323,6 +420,8 @@ export default function CatalogPage() {
             </div>
           )}
         </main>
+
+        <Footer />
       </div>
 
       {isAdmin && (
