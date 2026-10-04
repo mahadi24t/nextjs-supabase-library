@@ -101,8 +101,15 @@ export interface CreateIssueFormData {
 }
 
 // ============================================================================
-// BOOK REQUESTS (Phase 3)
+// INVENTORY & CIRCULATION (Phase 1 & 2)
 // ============================================================================
+
+export interface InventoryStatus {
+  totalCopies: number;
+  activeLoansCount: number;
+  availableCopies: number;
+  isAvailable: boolean;
+}
 
 export type RequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
@@ -119,6 +126,7 @@ export interface BookRequest {
     title: string;
     coverUrl?: string;
     availability: BookAvailability;
+    copies?: number;
     authors?: string[];
   };
   member?: {

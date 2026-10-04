@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { Sun, Moon, Search, Bell, Library, LogOut, ShieldCheck, Lock, User } from 'lucide-react';
 import { useAuth } from '@/app/context/AuthContext';
@@ -103,6 +103,25 @@ export default function Navbar({
 
   const showSearch = searchQuery !== undefined && onSearchChange !== undefined;
 
+  // 200ms Search Debounce
+  const [localSearch, setLocalSearch] = useState(searchQuery ?? '');
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, []);
+
+  const handleSearchInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setLocalSearch(val);
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      onSearchChange?.(val);
+    }, 200);
+  };
+
   return (
     <header className="sticky top-0 z-20 h-16 flex items-center justify-between gap-3 md:gap-4 px-3 sm:px-4 md:px-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
       {/* Mobile branding */}
@@ -125,8 +144,8 @@ export default function Navbar({
             id="global-search"
             type="search"
             placeholder={searchPlaceholder}
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
+            value={localSearch}
+            onChange={handleSearchInputChange}
             aria-label="Search"
             className="w-full pl-9 pr-4 py-2 text-sm rounded-lg bg-slate-100 dark:bg-slate-800 border border-transparent focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none text-slate-900 dark:text-slate-100 placeholder:text-slate-400 transition-all"
           />

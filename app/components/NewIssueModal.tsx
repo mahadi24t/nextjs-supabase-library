@@ -9,7 +9,7 @@ import type { Book, Member, CreateIssueFormData } from '@/app/lib/types';
 interface NewIssueModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onIssueCreated: () => Promise<void> | void;
+  onIssueCreated: (issuedBookId?: string) => Promise<void> | void;
   preselectedBookId?: string;
 }
 
@@ -139,7 +139,7 @@ function NewIssueModalContent({ onClose, onIssueCreated, preselectedBookId }: Om
       };
 
       await createBookIssue(payload);
-      await onIssueCreated();
+      await onIssueCreated(selectedBookId);
       onClose();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to issue the book.');

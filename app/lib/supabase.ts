@@ -14,6 +14,7 @@ import type {
   LibrarianNotificationSummary,
   MemberNotificationSummary,
   MemberNotificationItem,
+  InventoryStatus,
 } from '@/app/lib/types';
 
 
@@ -540,7 +541,51 @@ export async function fetchBookIssues(): Promise<BookIssue[]> {
   return ((data ?? []) as unknown as BookIssueRow[]).map(mapBookIssueRowToIssue);
 }
 
+export type { InventoryStatus };
+
+/**
+ * Dedicated lean inventory helper.
+ * Concurrently fetches book total copies and active loan count to calculate real-time inventory.
+ */
+export async function getBookInventoryStatus(bookId: string): Promise<InventoryStatus> {
+  // Fetch book total copies and count active loans concurrently
+  const [bookRes, loanCountRes] = await Promise.all([
+    supabase.from('books').select('copies').eq('id', bookId).single(),
+    supabase.from('book_issues').select('id', { count: 'exact', head: true }).eq('book_id', bookId).is('returned_at', null),
+  ]);
+
+  if (bookRes.error || !bookRes.data) throw new Error('Book record not found');
+
+  const totalCopies = Math.max(1, bookRes.data.copies ?? 1);
+  const activeLoansCount = loanCountRes.count ?? 0;
+  const availableCopies = Math.max(0, totalCopies - activeLoansCount);
+
+  return {
+    totalCopies,
+    activeLoansCount,
+    availableCopies,
+    isAvailable: availableCopies > 0,
+  };
+}
+
+export async function fetchSingleBookIssue(issueId: string): Promise<BookIssue | null> {
+  const { data, error } = await supabase
+    .from('book_issues')
+    .select(bookIssueSelect)
+    .eq('id', issueId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return mapBookIssueRowToIssue(data as unknown as BookIssueRow);
+}
+
 export async function createBookIssue(data: CreateIssueFormData): Promise<string> {
+  // Strict Concurrency & Inventory Guard
+  const inventory = await getBookInventoryStatus(data.bookId);
+  if (inventory.availableCopies <= 0) {
+    throw new Error(`Cannot issue book: All ${inventory.totalCopies} copy/copies are currently borrowed.`);
+  }
+
   const insertPayload = {
     book_id: data.bookId,
     member_id: data.memberId,
@@ -560,10 +605,11 @@ export async function createBookIssue(data: CreateIssueFormData): Promise<string
     throw new Error('Supabase did not return the created issue ID.');
   }
 
-  // Update book availability to issued
+  // After issuing: If availableCopies - 1 <= 0, mark 'issued', else keep 'available'
+  const nextAvailability: BookAvailability = inventory.availableCopies - 1 <= 0 ? 'issued' : 'available';
   const { error: bookError } = await supabase
     .from('books')
-    .update({ availability: 'issued' })
+    .update({ availability: nextAvailability })
     .eq('id', data.bookId);
 
   if (bookError) throw bookError;
@@ -585,18 +631,21 @@ export async function returnBookIssue(issueId: string, bookId: string): Promise<
 
   if (issueError) throw issueError;
 
-  // Toggle book availability back to available
-  const { error: bookError } = await supabase
-    .from('books')
-    .update({ availability: 'available' })
-    .eq('id', bookId);
+  // When returning, check if active loans become less than totalCopies. If so, ensure books.availability = 'available'.
+  const inventory = await getBookInventoryStatus(bookId);
+  if (inventory.availableCopies > 0) {
+    const { error: bookError } = await supabase
+      .from('books')
+      .update({ availability: 'available' })
+      .eq('id', bookId);
 
-  if (bookError) throw bookError;
+    if (bookError) throw bookError;
+  }
 }
 
 /**
  * Returns an issued book given only its bookId.
- * Updates any active/overdue book_issues record and sets the book to 'available'.
+ * Updates any active/overdue book_issues record and sets the book to 'available' if inventory allows.
  */
 export async function returnBookByBookId(bookId: string): Promise<void> {
   const now = new Date().toISOString();
@@ -622,13 +671,16 @@ export async function returnBookByBookId(bookId: string): Promise<void> {
       .eq('id', issueId);
   }
 
-  // Always reset book availability back to available
-  const { error: bookError } = await supabase
-    .from('books')
-    .update({ availability: 'available' })
-    .eq('id', bookId);
+  // When returning, check if active loans become less than totalCopies. If so, ensure books.availability = 'available'.
+  const inventory = await getBookInventoryStatus(bookId);
+  if (inventory.availableCopies > 0) {
+    const { error: bookError } = await supabase
+      .from('books')
+      .update({ availability: 'available' })
+      .eq('id', bookId);
 
-  if (bookError) throw bookError;
+    if (bookError) throw bookError;
+  }
 }
 
 // ============================================================================
@@ -720,6 +772,7 @@ interface BookRequestRow {
     title: string;
     cover_url: string | null;
     availability: BookAvailability;
+    copies?: number;
     book_authors?: Array<{ authors: { name: string } | null }>;
   } | null;
   members?: {
@@ -751,6 +804,7 @@ function mapBookRequestRowToRequest(row: BookRequestRow): BookRequest {
           title: row.books.title,
           coverUrl: row.books.cover_url ?? undefined,
           availability: row.books.availability,
+          copies: row.books.copies ?? 1,
           authors: bookAuthors,
         }
       : undefined,
@@ -768,7 +822,7 @@ function mapBookRequestRowToRequest(row: BookRequestRow): BookRequest {
 
 const bookRequestSelect = `
   id, book_id, member_id, status, request_notes, created_at, updated_at,
-  books (id, title, cover_url, availability, book_authors (authors (name))),
+  books (id, title, cover_url, availability, copies, book_authors (authors (name))),
   members (id, member_code, full_name, email, phone)
 `;
 
@@ -781,14 +835,9 @@ export async function createBookRequest(
   memberId: string,
   notes?: string,
 ): Promise<BookRequest> {
-  // 1. Check book availability
-  const { data: bookData, error: bookFetchError } = await supabase
-    .from('books')
-    .select('availability')
-    .eq('id', bookId)
-    .single();
-  if (bookFetchError) throw bookFetchError;
-  if (bookData?.availability === 'issued') {
+  // 1. Check real-time inventory
+  const inventory = await getBookInventoryStatus(bookId);
+  if (inventory.availableCopies <= 0) {
     throw new Error('This book is currently issued and unavailable for requests.');
   }
 
@@ -842,16 +891,22 @@ export async function fetchBookRequests(status?: RequestStatus): Promise<BookReq
 
 /**
  * Approves a book request:
- * 1. Creates a book_issues record via createBookIssue() (which also marks the book as 'issued')
- * 2. Updates book_requests.status to 'approved'
+ * 1. Checks available inventory
+ * 2. Creates a book_issues record via createBookIssue()
+ * 3. Updates book_requests.status to 'approved'
  */
 export async function approveBookRequest(
   requestId: string,
   bookId: string,
   memberId: string,
   dueDate: string,
-): Promise<void> {
-  await createBookIssue({ bookId, memberId, dueDate });
+): Promise<string> {
+  const inventory = await getBookInventoryStatus(bookId);
+  if (inventory.availableCopies <= 0) {
+    throw new Error(`Cannot issue book: All ${inventory.totalCopies} copy/copies are currently borrowed.`);
+  }
+
+  const issueId = await createBookIssue({ bookId, memberId, dueDate });
 
   const { error } = await supabase
     .from('book_requests')
@@ -859,6 +914,8 @@ export async function approveBookRequest(
     .eq('id', requestId);
 
   if (error) throw error;
+
+  return issueId;
 }
 
 /**

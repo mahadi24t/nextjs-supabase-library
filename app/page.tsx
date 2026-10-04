@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Plus, Search, X, BarChart3, BookMarked, Users2, TrendingUp, LoaderCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import Sidebar from '@/app/components/Sidebar';
 import Navbar from '@/app/components/Navbar';
@@ -52,6 +52,24 @@ function MobileSearchBar({ searchQuery, onSearchChange, onClose }: {
   onSearchChange: (query: string) => void;
   onClose: () => void;
 }) {
+  const [localVal, setLocalVal] = useState(searchQuery);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, []);
+
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const val = event.target.value;
+    setLocalVal(val);
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      onSearchChange(val);
+    }, 200);
+  };
+
   return (
     <div className="md:hidden fixed inset-x-0 top-16 z-20 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-2 flex items-center gap-2">
       <Search className="w-4 h-4 text-slate-400 shrink-0" />
@@ -59,8 +77,8 @@ function MobileSearchBar({ searchQuery, onSearchChange, onClose }: {
         id="mobile-search"
         type="search"
         placeholder="Search Title, Author, ISBN…"
-        value={searchQuery}
-        onChange={(event) => onSearchChange(event.target.value)}
+        value={localVal}
+        onChange={handleChange}
         autoFocus
         aria-label="Search books"
         className="flex-1 bg-transparent text-sm outline-none text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
@@ -179,6 +197,22 @@ export default function CatalogPage() {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
+  const updateSingleBook = useCallback(async (bookId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('books')
+        .select(bookSelect)
+        .eq('id', bookId)
+        .single();
+      if (!error && data) {
+        const updated = mapBookRowToBook(data as unknown as BookRow);
+        setBooks((prev) => prev.map((b) => (b.id === bookId ? updated : b)));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const genres = useMemo(
     () => Array.from(new Set(books.flatMap((book) => book.genres))).sort((a, b) => a.localeCompare(b)),
     [books],
@@ -191,22 +225,43 @@ export default function CatalogPage() {
     setCurrentPage(1);
   }, [searchQuery, effectiveGenre]);
 
+  const queryTokens = useMemo(() => {
+    return searchQuery
+      .toLowerCase()
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+  }, [searchQuery]);
+
   const filteredBooks = useMemo(() => {
-    const query = searchQuery.toLowerCase().trim();
+    const isAll = effectiveGenre === 'All';
+    const lowerGenre = effectiveGenre.toLowerCase();
+
+    if (queryTokens.length === 0 && isAll) {
+      return books;
+    }
+
     return books.filter((book) => {
-      const matchesGenre =
-        effectiveGenre === 'All' ||
-        book.genres?.some((g) => g.toLowerCase() === effectiveGenre.toLowerCase());
-      if (!query) return matchesGenre;
+      if (!isAll) {
+        const matchesGenre = book.genres?.some((g) => g.toLowerCase() === lowerGenre);
+        if (!matchesGenre) return false;
+      }
+      if (queryTokens.length === 0) return true;
 
-      const matchesTitle = book.title?.toLowerCase().includes(query);
-      const matchesAuthor = book.authors?.some((author) => author.toLowerCase().includes(query));
-      const matchesIsbn = book.isbn?.toLowerCase().includes(query);
-      const matchesSubtitle = book.subtitle?.toLowerCase().includes(query);
+      const titleLower = book.title?.toLowerCase() ?? '';
+      const subtitleLower = book.subtitle?.toLowerCase() ?? '';
+      const isbnLower = book.isbn?.toLowerCase() ?? '';
+      const authorsLower = book.authors?.join(' ').toLowerCase() ?? '';
 
-      return matchesGenre && (matchesTitle || matchesAuthor || matchesIsbn || matchesSubtitle);
+      return queryTokens.every(
+        (token) =>
+          titleLower.includes(token) ||
+          authorsLower.includes(token) ||
+          isbnLower.includes(token) ||
+          subtitleLower.includes(token),
+      );
     });
-  }, [effectiveGenre, books, searchQuery]);
+  }, [books, effectiveGenre, queryTokens]);
 
   const totalPages = Math.max(1, Math.ceil(filteredBooks.length / ITEMS_PER_PAGE));
 
@@ -237,14 +292,23 @@ export default function CatalogPage() {
       );
       if (!confirmed) return;
 
+      // Optimistic local state update (eliminate waterfall full catalog refetches)
+      setBooks((prev) =>
+        prev.map((b) => (b.id === book.id ? { ...b, availability: 'available' } : b))
+      );
+
       try {
         await returnBookByBookId(book.id);
-        await loadBooks();
+        await updateSingleBook(book.id);
       } catch (err) {
+        // Rollback on error
+        setBooks((prev) =>
+          prev.map((b) => (b.id === book.id ? { ...b, availability: book.availability } : b))
+        );
         setLoadError(err instanceof Error ? err.message : 'Failed to return the book.');
       }
     }
-  }, [loadBooks]);
+  }, [updateSingleBook]);
 
   const handleDeleteBook = useCallback(async (bookId: string) => {
     setBooks((currentBooks) => currentBooks.filter((book) => book.id !== bookId));
@@ -437,30 +501,39 @@ export default function CatalogPage() {
 
       <BottomNav activeNav={activeNav} onNavChange={setActiveNav} />
 
-      <AddBookModal
-        isOpen={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
-        onBookCreated={loadBooks}
-        existingGenres={genres}
-      />
+      {addModalOpen && (
+        <AddBookModal
+          isOpen={addModalOpen}
+          onClose={() => setAddModalOpen(false)}
+          onBookCreated={loadBooks}
+          existingGenres={genres}
+        />
+      )}
 
-      <EditBookModal
-        isOpen={Boolean(editingBook)}
-        book={editingBook}
-        onClose={() => setEditingBook(null)}
-        onBookUpdated={loadBooks}
-        existingGenres={genres}
-      />
+      {Boolean(editingBook) && (
+        <EditBookModal
+          isOpen={Boolean(editingBook)}
+          book={editingBook}
+          onClose={() => setEditingBook(null)}
+          onBookUpdated={loadBooks}
+          existingGenres={genres}
+        />
+      )}
 
-      <NewIssueModal
-        isOpen={Boolean(issuingBook)}
-        onClose={() => setIssuingBook(null)}
-        onIssueCreated={async () => {
-          await loadBooks();
-          setIssuingBook(null);
-        }}
-        preselectedBookId={issuingBook?.id}
-      />
+      {Boolean(issuingBook) && (
+        <NewIssueModal
+          isOpen={Boolean(issuingBook)}
+          onClose={() => setIssuingBook(null)}
+          onIssueCreated={async (issuedBookId) => {
+            const targetId = issuedBookId || issuingBook?.id;
+            if (targetId) {
+              await updateSingleBook(targetId);
+            }
+            setIssuingBook(null);
+          }}
+          preselectedBookId={issuingBook?.id}
+        />
+      )}
     </div>
   );
 }

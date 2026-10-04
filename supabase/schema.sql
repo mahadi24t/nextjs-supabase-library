@@ -278,6 +278,7 @@ create index if not exists book_issues_book_id_idx on public.book_issues (book_i
 create index if not exists book_issues_member_id_idx on public.book_issues (member_id);
 create index if not exists book_issues_status_idx on public.book_issues (status);
 create index if not exists book_issues_due_date_idx on public.book_issues (due_date);
+create index if not exists book_issues_active_inventory_idx on public.book_issues (book_id) where returned_at is null;
 
 drop trigger if exists members_set_updated_at on public.members;
 create trigger members_set_updated_at

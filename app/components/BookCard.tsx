@@ -34,6 +34,7 @@ export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardPr
   const { isAdmin } = useAuth();
   const { title, authors, genres, location, availability, coverUrl, publishedYear, language } = book;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const cleanCoverUrl = coverUrl?.trim() || null;
@@ -49,16 +50,26 @@ export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardPr
       {/* Cover Image Container */}
       <div className="relative w-full aspect-[2/3] bg-slate-900 overflow-hidden">
         {hasCover && cleanCoverUrl ? (
-          // A native image allows direct cover requests with no Referer header.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={cleanCoverUrl}
-            alt={`Cover of ${title}`}
-            referrerPolicy="no-referrer"
-            loading="lazy"
-            className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-            onError={() => setFailedUrl(cleanCoverUrl)}
-          />
+          <>
+            {!imageLoaded && (
+              <div className="absolute inset-0 bg-neutral-800 animate-pulse" aria-hidden="true" />
+            )}
+            {/* Native image allows direct cover requests with no Referer header */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={cleanCoverUrl}
+              alt={title}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              decoding="async"
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setFailedUrl(cleanCoverUrl)}
+              className={cn(
+                'absolute inset-0 h-full w-full object-cover transform transition-transform duration-300 group-hover:scale-105',
+                !imageLoaded && 'opacity-0',
+              )}
+            />
+          </>
         ) : (
           <div className="absolute inset-0 flex flex-col justify-between p-3.5 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-slate-100 select-none overflow-hidden">
             {/* Ambient subtle glow */}
@@ -205,11 +216,13 @@ export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardPr
         </div>
       </div>
     </article>
-    <BookDetailsModal
-      isOpen={detailsOpen}
-      book={book}
-      onClose={() => setDetailsOpen(false)}
-    />
+    {detailsOpen && (
+      <BookDetailsModal
+        isOpen={detailsOpen}
+        book={book}
+        onClose={() => setDetailsOpen(false)}
+      />
+    )}
     </>
   );
 }

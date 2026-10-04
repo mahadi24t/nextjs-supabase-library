@@ -21,7 +21,16 @@ import {
 import AppLayout from '@/app/components/AppLayout';
 import NewIssueModal from '@/app/components/NewIssueModal';
 import { useAuth } from '@/app/context/AuthContext';
-import { fetchBookIssues, returnBookIssue, fetchBookRequests, approveBookRequest, rejectBookRequest } from '@/app/lib/supabase';
+import {
+  fetchBookIssues,
+  returnBookIssue,
+  fetchBookRequests,
+  approveBookRequest,
+  rejectBookRequest,
+  getBookInventoryStatus,
+  fetchSingleBookIssue,
+  type InventoryStatus,
+} from '@/app/lib/supabase';
 import { cn } from '@/app/lib/utils';
 import type { BookIssue, BookRequest } from '@/app/lib/types';
 
@@ -68,6 +77,17 @@ export default function IssueReturnPage() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   // Map of requestId -> chosen due date string
   const [dueDates, setDueDates] = useState<Record<string, string>>({});
+  // Real-time stock status map: bookId -> InventoryStatus
+  const [stockStatus, setStockStatus] = useState<Record<string, InventoryStatus>>({});
+
+  const refreshBookInventory = useCallback(async (bookId: string) => {
+    try {
+      const status = await getBookInventoryStatus(bookId);
+      setStockStatus((prev) => ({ ...prev, [bookId]: status }));
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -131,6 +151,24 @@ export default function IssueReturnPage() {
         }
       });
       setDueDates((prev) => ({ ...defaults, ...prev }));
+
+      // Concurrently resolve stock status for unique requested books
+      const uniqueBookIds = Array.from(new Set(data.map((r) => r.bookId)));
+      const statuses = await Promise.all(
+        uniqueBookIds.map(async (bId) => {
+          try {
+            const st = await getBookInventoryStatus(bId);
+            return [bId, st] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+      const nextMap: Record<string, InventoryStatus> = {};
+      statuses.forEach((item) => {
+        if (item) nextMap[item[0]] = item[1];
+      });
+      setStockStatus((prev) => ({ ...prev, ...nextMap }));
     } catch (err) {
       setRequestsError(err instanceof Error ? err.message : 'Failed to load borrow requests.');
     } finally {
@@ -188,10 +226,23 @@ export default function IssueReturnPage() {
     }
 
     setReturningId(issue.id);
+    const prevIssues = issues;
+    const nowIso = new Date().toISOString();
+
+    // Fast optimistic local state reconciliation (eliminate waterfall full-table refetches)
+    setIssues((prev) =>
+      prev.map((item) =>
+        item.id === issue.id
+          ? { ...item, returnedAt: nowIso, status: 'returned', returnRequested: false }
+          : item
+      )
+    );
+
     try {
       await returnBookIssue(issue.id, issue.bookId);
-      await loadData();
+      void refreshBookInventory(issue.bookId);
     } catch (err) {
+      setIssues(prevIssues);
       alert(err instanceof Error ? err.message : 'Failed to mark book as returned.');
     } finally {
       setReturningId(null);
@@ -206,10 +257,19 @@ export default function IssueReturnPage() {
     }
     setApprovingId(req.id);
     try {
-      await approveBookRequest(req.id, req.bookId, req.memberId, due);
-      await Promise.all([loadPendingRequests(), loadData()]);
+      const issueId = await approveBookRequest(req.id, req.bookId, req.memberId, due);
+      // Fast localized state update: remove approved request from pending list
+      setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
+
+      // Fetch and prepend newly created issue
+      const newIssue = await fetchSingleBookIssue(issueId);
+      if (newIssue) {
+        setIssues((prev) => [newIssue, ...prev.filter((i) => i.id !== newIssue.id)]);
+      }
+      void refreshBookInventory(req.bookId);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to approve the request.');
+      void refreshBookInventory(req.bookId);
     } finally {
       setApprovingId(null);
     }
@@ -220,7 +280,8 @@ export default function IssueReturnPage() {
     setRejectingId(req.id);
     try {
       await rejectBookRequest(req.id);
-      await loadPendingRequests();
+      // Fast localized state update
+      setPendingRequests((prev) => prev.filter((r) => r.id !== req.id));
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to reject the request.');
     } finally {
@@ -345,100 +406,131 @@ export default function IssueReturnPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
-                    {pendingRequests.map((req) => (
-                      <tr key={req.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-750 transition-colors">
-                        {/* Book */}
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-14 rounded bg-slate-900 shrink-0 overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-sm">
-                              {req.book?.coverUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={req.book.coverUrl} alt={req.book.title} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
-                              ) : (
-                                <BookOpen className="w-4 h-4 text-violet-400" />
-                              )}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="font-semibold text-slate-900 dark:text-slate-100 line-clamp-1">
-                                {req.book?.title ?? 'Unknown Book'}
+                    {pendingRequests.map((req) => {
+                      const inv = stockStatus[req.bookId];
+                      const totalCopies = inv ? inv.totalCopies : (req.book?.copies ?? 1);
+                      const activeCount = inv
+                        ? inv.activeLoansCount
+                        : activeIssues.filter((i) => i.bookId === req.bookId).length;
+                      const availableCopies = inv ? inv.availableCopies : Math.max(0, totalCopies - activeCount);
+                      const isOutOfStock = availableCopies <= 0;
+
+                      return (
+                        <tr key={req.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-750 transition-colors">
+                          {/* Book */}
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-14 rounded bg-slate-900 shrink-0 overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-sm">
+                                {req.book?.coverUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={req.book.coverUrl} alt={req.book.title} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                                ) : (
+                                  <BookOpen className="w-4 h-4 text-violet-400" />
+                                )}
                               </div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                                {req.book?.authors?.join(', ') || 'Unknown Author'}
-                              </div>
-                              {req.requestNotes && (
-                                <div className="text-[11px] text-slate-400 italic truncate mt-0.5">
-                                  Note: {req.requestNotes}
+                              <div className="min-w-0">
+                                <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap">
+                                  <span>{req.book?.title ?? 'Unknown Book'}</span>
+                                  {isOutOfStock ? (
+                                    <span className="text-xs text-rose-500 font-mono font-medium">
+                                      (0/{totalCopies} in shelf · All on loan)
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-emerald-500 font-mono font-medium">
+                                      ({availableCopies}/{totalCopies} copies in shelf)
+                                    </span>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        {/* Member */}
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 font-bold flex items-center justify-center text-xs shrink-0">
-                              <User className="w-3.5 h-3.5" />
-                            </div>
-                            <div>
-                              <div className="font-medium text-slate-900 dark:text-slate-100">
-                                {req.member?.fullName ?? 'Unknown Member'}
-                              </div>
-                              <div className="font-mono text-[11px] font-semibold text-violet-600 dark:text-violet-400">
-                                {req.member?.memberCode ?? '—'}
+                                <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                  {req.book?.authors?.join(', ') || 'Unknown Author'}
+                                </div>
+                                {req.requestNotes && (
+                                  <div className="text-[11px] text-slate-400 italic truncate mt-0.5">
+                                    Note: {req.requestNotes}
+                                  </div>
+                                )}
                               </div>
                             </div>
-                          </div>
-                        </td>
-                        {/* Request Date */}
-                        <td className="px-4 py-3.5 text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                          <div className="flex items-center gap-1.5">
-                            <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{new Date(req.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                          </div>
-                        </td>
-                        {/* Due date picker */}
-                        <td className="px-4 py-3.5">
-                          <input
-                            type="date"
-                            id={`due-date-${req.id}`}
-                            aria-label={`Due date for request ${req.id}`}
-                            value={dueDates[req.id] ?? ''}
-                            onChange={(e) => setDueDates((prev) => ({ ...prev, [req.id]: e.target.value }))}
-                            min={new Date().toISOString().split('T')[0]}
-                            className="text-xs rounded-lg bg-slate-100 dark:bg-slate-700 border border-transparent focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none text-slate-900 dark:text-slate-100 px-2 py-1.5 transition-all"
-                          />
-                        </td>
-                        {/* Actions */}
-                        <td className="px-5 py-3.5 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              id={`approve-request-${req.id}`}
-                              onClick={() => void handleApproveRequest(req)}
-                              disabled={approvingId === req.id || rejectingId === req.id}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 shadow-sm"
-                            >
-                              {approvingId === req.id ? (
-                                <><LoaderCircle className="w-3.5 h-3.5 animate-spin" />Approving…</>
+                          </td>
+                          {/* Member */}
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 font-bold flex items-center justify-center text-xs shrink-0">
+                                <User className="w-3.5 h-3.5" />
+                              </div>
+                              <div>
+                                <div className="font-medium text-slate-900 dark:text-slate-100">
+                                  {req.member?.fullName ?? 'Unknown Member'}
+                                </div>
+                                <div className="font-mono text-[11px] font-semibold text-violet-600 dark:text-violet-400">
+                                  {req.member?.memberCode ?? '—'}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          {/* Request Date */}
+                          <td className="px-4 py-3.5 text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                              <span>{new Date(req.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                            </div>
+                          </td>
+                          {/* Due date picker */}
+                          <td className="px-4 py-3.5">
+                            <input
+                              type="date"
+                              id={`due-date-${req.id}`}
+                              aria-label={`Due date for request ${req.id}`}
+                              value={dueDates[req.id] ?? ''}
+                              onChange={(e) => setDueDates((prev) => ({ ...prev, [req.id]: e.target.value }))}
+                              min={new Date().toISOString().split('T')[0]}
+                              className="text-xs rounded-lg bg-slate-100 dark:bg-slate-700 border border-transparent focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none text-slate-900 dark:text-slate-100 px-2 py-1.5 transition-all"
+                            />
+                          </td>
+                          {/* Actions */}
+                          <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-2">
+                              {isOutOfStock ? (
+                                <button
+                                  id={`approve-request-${req.id}`}
+                                  disabled
+                                  aria-disabled="true"
+                                  title={`Cannot issue book: All ${totalCopies} copy/copies are currently borrowed.`}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-400 dark:bg-slate-600 opacity-40 cursor-not-allowed text-white text-xs font-semibold shadow-sm"
+                                >
+                                  Out of Stock
+                                </button>
                               ) : (
-                                <><CheckCircle2 className="w-3.5 h-3.5" />Approve &amp; Issue</>
+                                <button
+                                  id={`approve-request-${req.id}`}
+                                  onClick={() => void handleApproveRequest(req)}
+                                  disabled={approvingId === req.id || rejectingId === req.id}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 shadow-sm"
+                                >
+                                  {approvingId === req.id ? (
+                                    <><LoaderCircle className="w-3.5 h-3.5 animate-spin" />Approving…</>
+                                  ) : (
+                                    <><CheckCircle2 className="w-3.5 h-3.5" />Approve &amp; Issue</>
+                                  )}
+                                </button>
                               )}
-                            </button>
-                            <button
-                              id={`reject-request-${req.id}`}
-                              onClick={() => void handleRejectRequest(req)}
-                              disabled={approvingId === req.id || rejectingId === req.id}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-950/50 hover:bg-red-200 dark:hover:bg-red-900/60 disabled:opacity-50 text-red-700 dark:text-red-300 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 shadow-sm"
-                            >
-                              {rejectingId === req.id ? (
-                                <><LoaderCircle className="w-3.5 h-3.5 animate-spin" />Rejecting…</>
-                              ) : (
-                                <><X className="w-3.5 h-3.5" />Reject</>
-                              )}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              <button
+                                id={`reject-request-${req.id}`}
+                                onClick={() => void handleRejectRequest(req)}
+                                disabled={approvingId === req.id || rejectingId === req.id}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-950/50 hover:bg-red-200 dark:hover:bg-red-900/60 disabled:opacity-50 text-red-700 dark:text-red-300 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 shadow-sm"
+                              >
+                                {rejectingId === req.id ? (
+                                  <><LoaderCircle className="w-3.5 h-3.5 animate-spin" />Rejecting…</>
+                                ) : (
+                                  <><X className="w-3.5 h-3.5" />Reject</>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -720,7 +812,10 @@ export default function IssueReturnPage() {
       <NewIssueModal
         isOpen={newIssueModalOpen}
         onClose={() => setNewIssueModalOpen(false)}
-        onIssueCreated={loadData}
+        onIssueCreated={async (issuedBookId) => {
+          await loadData();
+          if (issuedBookId) void refreshBookInventory(issuedBookId);
+        }}
       />
     </AppLayout>
   );
