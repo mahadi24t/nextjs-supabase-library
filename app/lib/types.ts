@@ -74,6 +74,8 @@ export interface BookIssue {
   dueDate: string;
   returnedAt: string | null;
   status: BookIssueStatus;
+  returnRequested?: boolean;
+  returnRequestedAt?: string | null;
   notes?: string;
   book?: {
     id: string;

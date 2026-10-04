@@ -2,9 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, BookOpen, Clock, CheckCircle2, XCircle, Ban, AlertCircle, RefreshCw, LogOut } from 'lucide-react';
+import { X, BookOpen, Clock, CheckCircle2, XCircle, Ban, AlertCircle, RefreshCw, LogOut, RotateCcw } from 'lucide-react';
 import { useMemberAuth } from '@/app/context/MemberAuthContext';
-import { fetchMemberActiveIssues, fetchMemberBookRequests, cancelBookRequest } from '@/app/lib/supabase';
+import { fetchMemberActiveIssues, fetchMemberBookRequests, cancelBookRequest, requestBookReturn } from '@/app/lib/supabase';
 import type { BookIssue, BookRequest } from '@/app/lib/types';
 
 interface Props {
@@ -20,6 +20,8 @@ export default function MemberDashboardModal({ isOpen, onClose }: Props) {
   const [requests, setRequests] = useState<BookRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [requestingReturnId, setRequestingReturnId] = useState<string | null>(null);
+  const [confirmReturnId, setConfirmReturnId] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -69,6 +71,25 @@ export default function MemberDashboardModal({ isOpen, onClose }: Props) {
       console.error('Failed to cancel request:', err);
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  const handleRequestReturn = async (loanId: string) => {
+    try {
+      setRequestingReturnId(loanId);
+      await requestBookReturn(loanId);
+      setActiveLoans((prev) =>
+        prev.map((l) =>
+          l.id === loanId
+            ? { ...l, returnRequested: true, returnRequestedAt: new Date().toISOString() }
+            : l,
+        ),
+      );
+      setConfirmReturnId(null);
+    } catch (err) {
+      console.error('Failed to request return:', err);
+    } finally {
+      setRequestingReturnId(null);
     }
   };
 
@@ -198,16 +219,62 @@ export default function MemberDashboardModal({ isOpen, onClose }: Props) {
                       <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
                         Due: {new Date(loan.dueDate).toLocaleDateString()}
                       </p>
-                      {loan.status === 'overdue' ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-red-600 font-medium mt-1">
-                          <AlertCircle size={12} /> Overdue
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-medium mt-1">
-                          <CheckCircle2 size={12} /> Active loan
-                        </span>
+
+                      <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                        {loan.status === 'overdue' ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-red-600 dark:text-red-400 font-medium">
+                            <AlertCircle size={12} /> Overdue
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            <CheckCircle2 size={12} /> Active loan
+                          </span>
+                        )}
+
+                        {loan.returnRequested && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800/60 px-2 py-0.5 rounded-full">
+                            <Clock size={12} /> Return Pending Verification
+                          </span>
+                        )}
+                      </div>
+
+                      {loan.returnRequested && (
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 italic">
+                          Return submitted. Waiting for librarian to verify.
+                        </p>
                       )}
                     </div>
+
+                    {!loan.returnRequested && (
+                      <div className="flex-shrink-0 self-center">
+                        {confirmReturnId === loan.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleRequestReturn(loan.id)}
+                              disabled={requestingReturnId === loan.id}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition disabled:opacity-50 cursor-pointer shadow-sm"
+                            >
+                              {requestingReturnId === loan.id ? 'Submitting…' : 'Confirm?'}
+                            </button>
+                            <button
+                              onClick={() => setConfirmReturnId(null)}
+                              disabled={requestingReturnId === loan.id}
+                              className="px-2 py-1 text-xs text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 transition cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmReturnId(loan.id)}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/40 border border-purple-200 dark:border-purple-800/50 px-2.5 py-1.5 rounded-lg transition cursor-pointer"
+                          >
+                            <RotateCcw size={12} />
+                            <span>Request Return</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

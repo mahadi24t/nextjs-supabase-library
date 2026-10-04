@@ -450,6 +450,8 @@ export interface BookIssueRow {
   due_date: string;
   returned_at: string | null;
   status: 'active' | 'returned' | 'overdue';
+  return_requested?: boolean;
+  return_requested_at?: string | null;
   notes: string | null;
   books?: {
     id: string;
@@ -495,6 +497,8 @@ export function mapBookIssueRowToIssue(row: BookIssueRow): BookIssue {
     dueDate: row.due_date,
     returnedAt: row.returned_at,
     status,
+    returnRequested: Boolean(row.return_requested),
+    returnRequestedAt: row.return_requested_at ?? null,
     notes: row.notes ?? undefined,
     book: row.books
       ? {
@@ -518,7 +522,7 @@ export function mapBookIssueRowToIssue(row: BookIssueRow): BookIssue {
 }
 
 export const bookIssueSelect = `
-  id, book_id, member_id, issued_at, due_date, returned_at, status, notes,
+  id, book_id, member_id, issued_at, due_date, returned_at, status, return_requested, return_requested_at, notes,
   books (id, title, cover_url, book_authors (authors (name))),
   members (id, member_code, full_name, email, phone)
 `;
@@ -572,6 +576,7 @@ export async function returnBookIssue(issueId: string, bookId: string): Promise<
     .update({
       returned_at: now,
       status: 'returned',
+      return_requested: false,
     })
     .eq('id', issueId);
 
@@ -609,6 +614,7 @@ export async function returnBookByBookId(bookId: string): Promise<void> {
       .update({
         returned_at: now,
         status: 'returned',
+        return_requested: false,
       })
       .eq('id', issueId);
   }
@@ -865,7 +871,7 @@ export async function rejectBookRequest(requestId: string): Promise<void> {
 }
 
 export const memberActiveIssueSelect = `
-  id, book_id, member_id, issued_at, due_date, returned_at, status, notes,
+  id, book_id, member_id, issued_at, due_date, returned_at, status, return_requested, return_requested_at, notes,
   books (
     id, title, cover_url,
     shelf_locations (shelf_code, row_label, slot_label),
@@ -917,4 +923,22 @@ export async function cancelBookRequest(requestId: string): Promise<void> {
 
   if (error) throw error;
 }
+
+/**
+ * Member action: requests return of an issued book.
+ * Sets return_requested = true and timestamps it, placing the loan
+ * in 'Return Pending Verification' until the librarian confirms receipt.
+ */
+export async function requestBookReturn(issueId: string): Promise<void> {
+  const { error } = await supabase
+    .from('book_issues')
+    .update({
+      return_requested: true,
+      return_requested_at: new Date().toISOString(),
+    })
+    .eq('id', issueId);
+
+  if (error) throw error;
+}
+
 

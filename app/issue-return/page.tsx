@@ -537,7 +537,15 @@ export default function IssueReturnPage() {
                   const returnedDateObj = issue.returnedAt ? new Date(issue.returnedAt) : null;
 
                   return (
-                    <tr key={issue.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-750 transition-colors">
+                    <tr
+                      key={issue.id}
+                      className={cn(
+                        'transition-colors',
+                        issue.returnRequested && activeTab === 'active'
+                          ? 'bg-amber-50/80 dark:bg-amber-950/20 hover:bg-amber-100/70 dark:hover:bg-amber-950/30 border-l-4 border-l-amber-500'
+                          : 'hover:bg-slate-50/80 dark:hover:bg-slate-750',
+                      )}
+                    >
                       {/* Book Title & Cover */}
                       <td className="px-5 py-3.5">
                         <div className="flex items-center gap-3">
@@ -612,24 +620,32 @@ export default function IssueReturnPage() {
 
                       {/* Status Badge */}
                       <td className="px-4 py-3.5">
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold capitalize',
-                            isReturned
-                              ? 'bg-slate-100 text-slate-700 dark:bg-slate-700/60 dark:text-slate-300'
-                              : isOverdue
-                                ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
-                                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
-                          )}
-                        >
+                        <div className="flex flex-col gap-1 items-start">
                           <span
                             className={cn(
-                              'w-1.5 h-1.5 rounded-full',
-                              isReturned ? 'bg-slate-500' : isOverdue ? 'bg-rose-500' : 'bg-emerald-500',
+                              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold capitalize',
+                              isReturned
+                                ? 'bg-slate-100 text-slate-700 dark:bg-slate-700/60 dark:text-slate-300'
+                                : isOverdue
+                                  ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
                             )}
-                          />
-                          {issue.status}
-                        </span>
+                          >
+                            <span
+                              className={cn(
+                                'w-1.5 h-1.5 rounded-full',
+                                isReturned ? 'bg-slate-500' : isOverdue ? 'bg-rose-500' : 'bg-emerald-500',
+                              )}
+                            />
+                            {issue.status}
+                          </span>
+                          {issue.returnRequested && activeTab === 'active' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 animate-pulse">
+                              <AlertCircle size={12} className="text-amber-500 shrink-0" />
+                              <span>Return Requested by Member</span>
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Actions */}
@@ -640,17 +656,27 @@ export default function IssueReturnPage() {
                           <button
                             onClick={() => void handleReturn(issue)}
                             disabled={returningId === issue.id}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 shadow-sm"
+                            className={cn(
+                              'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg disabled:opacity-50 text-white text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 shadow-sm',
+                              issue.returnRequested
+                                ? 'bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500'
+                                : 'bg-violet-600 hover:bg-violet-700 focus-visible:ring-violet-500',
+                            )}
                           >
                             {returningId === issue.id ? (
                               <>
                                 <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
                                 Processing…
                               </>
+                            ) : issue.returnRequested ? (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Confirm &amp; Accept Return</span>
+                              </>
                             ) : (
                               <>
                                 <RotateCcw className="w-3.5 h-3.5" />
-                                Mark Returned
+                                <span>Mark Returned</span>
                               </>
                             )}
                           </button>

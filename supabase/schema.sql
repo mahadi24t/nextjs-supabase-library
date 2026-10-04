@@ -265,6 +265,8 @@ create table if not exists public.book_issues (
   due_date timestamptz not null,
   returned_at timestamptz,
   status public.issue_status not null default 'active',
+  return_requested boolean not null default false,
+  return_requested_at timestamptz,
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -369,4 +371,15 @@ begin
   execute format('create policy "Public delete access" on public.%I for delete to anon, authenticated using (true)', tbl);
 end;
 $$;
+
+-- ============================================================================
+-- PHASE 4 EXTENSION: 2-STEP BOOK RETURN FLOW (MEMBER REQUEST -> LIBRARIAN CONFIRM)
+-- ============================================================================
+
+-- Add return request tracking columns to book_issues
+alter table public.book_issues 
+add column if not exists return_requested boolean not null default false,
+add column if not exists return_requested_at timestamptz;
+
+create index if not exists book_issues_return_requested_idx on public.book_issues (return_requested);
 
