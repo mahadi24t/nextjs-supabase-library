@@ -89,6 +89,13 @@ export default function CatalogPage() {
   const [activeNav, setActiveNav] = useState('catalog');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      setDarkMode(document.documentElement.classList.contains('dark'));
+    }
+  }, []);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [activeGenre, setActiveGenre] = useState('All');
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -225,7 +232,7 @@ export default function CatalogPage() {
       <div className="flex flex-col flex-1 min-w-0">
         <Navbar
           darkMode={darkMode}
-          onToggleDark={() => setDarkMode((enabled) => !enabled)}
+          onToggleDark={() => setDarkMode(document.documentElement.classList.contains('dark'))}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
         />

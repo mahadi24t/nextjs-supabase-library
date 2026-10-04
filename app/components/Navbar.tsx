@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Sun, Moon, Search, Bell, Library, LogOut, ShieldCheck, Lock, User } from 'lucide-react';
 import { useAuth } from '@/app/context/AuthContext';
@@ -29,6 +29,22 @@ export default function Navbar({
   const { currentMember, isMemberLoggedIn } = useMemberAuth();
   const [memberAuthOpen, setMemberAuthOpen] = useState(false);
   const [memberDashboardOpen, setMemberDashboardOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  useEffect(() => {
+    const isDark =
+      document.documentElement.classList.contains('dark') ||
+      localStorage.getItem('libstack_theme') === 'dark';
+    setIsDarkMode(isDark);
+  }, []);
+
+  const toggleTheme = () => {
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('libstack_theme', isDark ? 'dark' : 'light');
+    setIsDarkMode(isDark);
+    onToggleDark?.();
+  };
+
   const showSearch = searchQuery !== undefined && onSearchChange !== undefined;
 
   return (
@@ -83,11 +99,16 @@ export default function Navbar({
         {/* Dark mode toggle */}
         <button
           id="theme-toggle"
-          onClick={onToggleDark}
-          aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-          className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+          onClick={toggleTheme}
+          aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 cursor-pointer"
         >
-          {darkMode ? <Sun className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" /> : <Moon className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />}
+          {isDarkMode ? (
+            <Sun className="w-5 h-5 text-amber-400" />
+          ) : (
+            <Moon className="w-5 h-5 text-neutral-600" />
+          )}
         </button>
 
         {/* Member Authentication Status / Actions */}

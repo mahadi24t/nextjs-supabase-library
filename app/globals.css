@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --color-background: var(--background);
@@ -12,7 +14,7 @@
 }
 
 .dark {
-  --background: #020617;
+  --background: #0e0f14;
   --foreground: #f1f5f9;
 }
 

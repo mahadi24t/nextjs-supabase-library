@@ -22,16 +22,13 @@ export default function AppLayout({
 }: AppLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  const [darkMode, setDarkMode] = useState(() => {
-    if (typeof document !== 'undefined') {
-      return document.documentElement.classList.contains('dark');
-    }
-    return false;
-  });
+  const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', darkMode);
-  }, [darkMode]);
+    if (typeof document !== 'undefined') {
+      setDarkMode(document.documentElement.classList.contains('dark'));
+    }
+  }, []);
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 transition-colors duration-200">
@@ -43,7 +40,7 @@ export default function AppLayout({
       <div className="flex flex-col flex-1 min-w-0">
         <Navbar
           darkMode={darkMode}
-          onToggleDark={() => setDarkMode((prev) => !prev)}
+          onToggleDark={() => setDarkMode(document.documentElement.classList.contains('dark'))}
           title={title}
           searchQuery={searchQuery}
           onSearchChange={onSearchChange}
