@@ -320,3 +320,53 @@ insert into public.members (member_code, full_name, email, phone, status) values
   ('MEM-005', 'Zubair Hossain', 'zubair.h@example.com', '+880 1515-000005', 'active')
 on conflict (member_code) do nothing;
 
+-- ============================================================================
+-- PHASE 3 EXTENSION: BOOK REQUESTS (MEMBER BORROW REQUEST & LIBRARIAN APPROVAL)
+-- ============================================================================
+
+do $$
+begin
+  create type public.request_status as enum ('pending', 'approved', 'rejected', 'cancelled');
+exception
+  when duplicate_object then null;
+end
+$$;
+
+create table if not exists public.book_requests (
+  id uuid primary key default gen_random_uuid(),
+  book_id uuid not null references public.books(id) on delete cascade,
+  member_id uuid not null references public.members(id) on delete cascade,
+  status public.request_status not null default 'pending',
+  request_notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists book_requests_book_id_idx on public.book_requests (book_id);
+create index if not exists book_requests_member_id_idx on public.book_requests (member_id);
+create index if not exists book_requests_status_idx on public.book_requests (status);
+
+drop trigger if exists book_requests_set_updated_at on public.book_requests;
+create trigger book_requests_set_updated_at
+before update on public.book_requests
+for each row execute function public.set_updated_at();
+
+alter table public.book_requests enable row level security;
+
+grant select, insert, update, delete on public.book_requests to anon, authenticated;
+
+do $$
+declare
+  tbl text := 'book_requests';
+begin
+  execute format('drop policy if exists "Public read access" on public.%I', tbl);
+  execute format('drop policy if exists "Public insert access" on public.%I', tbl);
+  execute format('drop policy if exists "Public update access" on public.%I', tbl);
+  execute format('drop policy if exists "Public delete access" on public.%I', tbl);
+  execute format('create policy "Public read access" on public.%I for select to anon, authenticated using (true)', tbl);
+  execute format('create policy "Public insert access" on public.%I for insert to anon, authenticated with check (true)', tbl);
+  execute format('create policy "Public update access" on public.%I for update to anon, authenticated using (true) with check (true)', tbl);
+  execute format('create policy "Public delete access" on public.%I for delete to anon, authenticated using (true)', tbl);
+end;
+$$;
+

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { MapPin, BookOpen, Pencil, Trash2 } from 'lucide-react';
 import { useAuth } from '@/app/context/AuthContext';
 import { cn } from '@/app/lib/utils';
+import BookDetailsModal from '@/app/components/BookDetailsModal';
 import type { Book } from '@/app/lib/types';
 
 interface BookCardProps {
@@ -33,14 +34,17 @@ export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardPr
   const { isAdmin } = useAuth();
   const { title, authors, genres, location, availability, coverUrl, publishedYear, language } = book;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const cleanCoverUrl = coverUrl?.trim() || null;
   const hasCover = Boolean(cleanCoverUrl && failedUrl !== cleanCoverUrl);
 
   return (
+    <>
     <article
-      className="group relative flex flex-col rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 overflow-hidden"
+      className="group relative flex flex-col rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 overflow-hidden cursor-pointer"
       aria-label={`Book: ${title}`}
+      onClick={() => setDetailsOpen(true)}
     >
       {/* Cover Image Container */}
       <div className="relative w-full aspect-[2/3] bg-slate-900 overflow-hidden">
@@ -112,7 +116,10 @@ export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardPr
 
         {/* Quick actions — accessible on mobile, visible on hover on desktop when Admin */}
         {isAdmin && (
-          <div className="absolute inset-x-0 bottom-0 z-20 flex gap-1 p-1.5 sm:p-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent max-md:translate-y-0 md:translate-y-full md:group-hover:translate-y-0 transition-transform duration-200">
+          <div
+            className="absolute inset-x-0 bottom-0 z-20 flex gap-1 p-1.5 sm:p-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent max-md:translate-y-0 md:translate-y-full md:group-hover:translate-y-0 transition-transform duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               id={`issue-book-${book.id}`}
               onClick={() => onIssue(book)}
@@ -198,5 +205,11 @@ export default function BookCard({ book, onIssue, onEdit, onDelete }: BookCardPr
         </div>
       </div>
     </article>
+    <BookDetailsModal
+      isOpen={detailsOpen}
+      book={book}
+      onClose={() => setDetailsOpen(false)}
+    />
+    </>
   );
 }

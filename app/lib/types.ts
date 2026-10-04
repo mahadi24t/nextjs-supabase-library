@@ -96,3 +96,34 @@ export interface CreateIssueFormData {
   dueDate: string;
   notes?: string;
 }
+
+// ============================================================================
+// BOOK REQUESTS (Phase 3)
+// ============================================================================
+
+export type RequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface BookRequest {
+  id: string;
+  bookId: string;
+  memberId: string;
+  status: RequestStatus;
+  requestNotes?: string;
+  createdAt: string;
+  updatedAt: string;
+  book?: {
+    id: string;
+    title: string;
+    coverUrl?: string;
+    availability: BookAvailability;
+    authors?: string[];
+  };
+  member?: {
+    id: string;
+    memberCode: string;
+    fullName: string;
+    email: string | null;
+    phone: string | null;
+  };
+}
+

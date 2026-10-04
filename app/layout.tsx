@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/app/context/AuthContext';
+import { MemberAuthProvider } from '@/app/context/MemberAuthContext';
 import AdminLoginModal from '@/app/components/AdminLoginModal';
 
 const inter = Inter({
@@ -27,8 +28,10 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans antialiased">
         <AuthProvider>
-          {children}
-          <AdminLoginModal />
+          <MemberAuthProvider>
+            {children}
+            <AdminLoginModal />
+          </MemberAuthProvider>
         </AuthProvider>
       </body>
     </html>

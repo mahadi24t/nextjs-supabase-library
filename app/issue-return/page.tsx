@@ -16,13 +16,14 @@ import {
   AlertCircle,
   History,
   Lock,
+  X,
 } from 'lucide-react';
 import AppLayout from '@/app/components/AppLayout';
 import NewIssueModal from '@/app/components/NewIssueModal';
 import { useAuth } from '@/app/context/AuthContext';
-import { fetchBookIssues, returnBookIssue } from '@/app/lib/supabase';
+import { fetchBookIssues, returnBookIssue, fetchBookRequests, approveBookRequest, rejectBookRequest } from '@/app/lib/supabase';
 import { cn } from '@/app/lib/utils';
-import type { BookIssue } from '@/app/lib/types';
+import type { BookIssue, BookRequest } from '@/app/lib/types';
 
 function StatCard({
   label,
@@ -58,6 +59,15 @@ export default function IssueReturnPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [newIssueModalOpen, setNewIssueModalOpen] = useState(false);
   const [returningId, setReturningId] = useState<string | null>(null);
+
+  // Pending requests state
+  const [pendingRequests, setPendingRequests] = useState<BookRequest[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestsError, setRequestsError] = useState<string | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  // Map of requestId -> chosen due date string
+  const [dueDates, setDueDates] = useState<Record<string, string>>({});
 
   const loadData = useCallback(async () => {
     try {
@@ -102,6 +112,36 @@ export default function IssueReturnPage() {
       isMounted = false;
     };
   }, []);
+
+  // Load pending requests whenever admin status changes
+  const loadPendingRequests = useCallback(async () => {
+    if (!isAdmin) return;
+    setRequestsLoading(true);
+    setRequestsError(null);
+    try {
+      const data = await fetchBookRequests('pending');
+      setPendingRequests(data);
+      // Pre-fill a default due date (14 days) for each request
+      const defaults: Record<string, string> = {};
+      data.forEach((r) => {
+        if (!dueDates[r.id]) {
+          const d = new Date();
+          d.setDate(d.getDate() + 14);
+          defaults[r.id] = d.toISOString().split('T')[0];
+        }
+      });
+      setDueDates((prev) => ({ ...defaults, ...prev }));
+    } catch (err) {
+      setRequestsError(err instanceof Error ? err.message : 'Failed to load borrow requests.');
+    } finally {
+      setRequestsLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  useEffect(() => {
+    void loadPendingRequests();
+  }, [loadPendingRequests]);
 
   const activeIssues = useMemo(() => {
     return issues.filter((i) => i.status === 'active' || i.status === 'overdue');
@@ -155,6 +195,36 @@ export default function IssueReturnPage() {
       alert(err instanceof Error ? err.message : 'Failed to mark book as returned.');
     } finally {
       setReturningId(null);
+    }
+  };
+
+  const handleApproveRequest = async (req: BookRequest) => {
+    const due = dueDates[req.id];
+    if (!due) {
+      alert('Please select a due date before approving.');
+      return;
+    }
+    setApprovingId(req.id);
+    try {
+      await approveBookRequest(req.id, req.bookId, req.memberId, due);
+      await Promise.all([loadPendingRequests(), loadData()]);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to approve the request.');
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleRejectRequest = async (req: BookRequest) => {
+    if (!confirm(`Reject borrow request for "${req.book?.title ?? 'this book'}" from ${req.member?.fullName ?? 'member'}?`)) return;
+    setRejectingId(req.id);
+    try {
+      await rejectBookRequest(req.id);
+      await loadPendingRequests();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to reject the request.');
+    } finally {
+      setRejectingId(null);
     }
   };
 
@@ -217,6 +287,165 @@ export default function IssueReturnPage() {
         <StatCard label="Returned (History)" value={stats.returned} icon={CheckCircle2} accent="bg-emerald-500" />
         <StatCard label="Total Transactions" value={stats.total} icon={ArrowLeftRight} accent="bg-blue-500" />
       </div>
+
+      {/* ── PENDING BORROW REQUESTS (admin only) ─────────────────────────── */}
+      {isAdmin && (
+        <section aria-labelledby="pending-requests-heading">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2">
+              <h2 id="pending-requests-heading" className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Pending Borrow Requests
+              </h2>
+              {pendingRequests.length > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-violet-600 text-white text-[10px] font-bold">
+                  {pendingRequests.length}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => void loadPendingRequests()}
+              disabled={requestsLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+              aria-label="Refresh pending requests"
+            >
+              <RotateCcw className={cn('w-3.5 h-3.5', requestsLoading && 'animate-spin')} />
+              Refresh
+            </button>
+          </div>
+
+          {requestsError && (
+            <div role="alert" className="mb-3 flex items-center gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-xs text-red-700 dark:text-red-300">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{requestsError}</span>
+            </div>
+          )}
+
+          {requestsLoading && pendingRequests.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-slate-400 text-sm">
+              <LoaderCircle className="w-5 h-5 animate-spin text-violet-400" />
+              Loading requests…
+            </div>
+          ) : pendingRequests.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-8 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center">
+              <CheckCircle2 className="w-8 h-8 text-emerald-400" />
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">No pending requests</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500">All member requests have been processed.</p>
+            </div>
+          ) : (
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 font-semibold text-xs border-b border-slate-200 dark:border-slate-700">
+                    <tr>
+                      <th className="px-5 py-3.5">Book</th>
+                      <th className="px-4 py-3.5">Requested By</th>
+                      <th className="px-4 py-3.5">Request Date</th>
+                      <th className="px-4 py-3.5">Due Date</th>
+                      <th className="px-5 py-3.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
+                    {pendingRequests.map((req) => (
+                      <tr key={req.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-750 transition-colors">
+                        {/* Book */}
+                        <td className="px-5 py-3.5">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-14 rounded bg-slate-900 shrink-0 overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-sm">
+                              {req.book?.coverUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={req.book.coverUrl} alt={req.book.title} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                              ) : (
+                                <BookOpen className="w-4 h-4 text-violet-400" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-900 dark:text-slate-100 line-clamp-1">
+                                {req.book?.title ?? 'Unknown Book'}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                {req.book?.authors?.join(', ') || 'Unknown Author'}
+                              </div>
+                              {req.requestNotes && (
+                                <div className="text-[11px] text-slate-400 italic truncate mt-0.5">
+                                  Note: {req.requestNotes}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        {/* Member */}
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 font-bold flex items-center justify-center text-xs shrink-0">
+                              <User className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <div className="font-medium text-slate-900 dark:text-slate-100">
+                                {req.member?.fullName ?? 'Unknown Member'}
+                              </div>
+                              <div className="font-mono text-[11px] font-semibold text-violet-600 dark:text-violet-400">
+                                {req.member?.memberCode ?? '—'}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        {/* Request Date */}
+                        <td className="px-4 py-3.5 text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{new Date(req.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                          </div>
+                        </td>
+                        {/* Due date picker */}
+                        <td className="px-4 py-3.5">
+                          <input
+                            type="date"
+                            id={`due-date-${req.id}`}
+                            aria-label={`Due date for request ${req.id}`}
+                            value={dueDates[req.id] ?? ''}
+                            onChange={(e) => setDueDates((prev) => ({ ...prev, [req.id]: e.target.value }))}
+                            min={new Date().toISOString().split('T')[0]}
+                            className="text-xs rounded-lg bg-slate-100 dark:bg-slate-700 border border-transparent focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none text-slate-900 dark:text-slate-100 px-2 py-1.5 transition-all"
+                          />
+                        </td>
+                        {/* Actions */}
+                        <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              id={`approve-request-${req.id}`}
+                              onClick={() => void handleApproveRequest(req)}
+                              disabled={approvingId === req.id || rejectingId === req.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 shadow-sm"
+                            >
+                              {approvingId === req.id ? (
+                                <><LoaderCircle className="w-3.5 h-3.5 animate-spin" />Approving…</>
+                              ) : (
+                                <><CheckCircle2 className="w-3.5 h-3.5" />Approve &amp; Issue</>
+                              )}
+                            </button>
+                            <button
+                              id={`reject-request-${req.id}`}
+                              onClick={() => void handleRejectRequest(req)}
+                              disabled={approvingId === req.id || rejectingId === req.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-100 dark:bg-red-950/50 hover:bg-red-200 dark:hover:bg-red-900/60 disabled:opacity-50 text-red-700 dark:text-red-300 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 shadow-sm"
+                            >
+                              {rejectingId === req.id ? (
+                                <><LoaderCircle className="w-3.5 h-3.5 animate-spin" />Rejecting…</>
+                              ) : (
+                                <><X className="w-3.5 h-3.5" />Reject</>
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Tabs & Search */}
       <div className="flex flex-wrap items-center justify-between gap-3">

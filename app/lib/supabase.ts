@@ -9,7 +9,10 @@ import type {
   BookIssue,
   BookIssueStatus,
   CreateIssueFormData,
+  RequestStatus,
+  BookRequest,
 } from '@/app/lib/types';
+
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -607,5 +610,244 @@ export async function returnBookByBookId(bookId: string): Promise<void> {
   if (bookError) throw bookError;
 }
 
+// ============================================================================
+// PHASE 3: MEMBER SELF-REGISTRATION & BOOK REQUEST OPERATIONS
+// ============================================================================
 
+/**
+ * Registers a new library member with an auto-generated member code.
+ * Generates codes in the format MEM-XXXX where XXXX is a random 4-digit number.
+ */
+export async function registerMember(data: {
+  fullName: string;
+  email: string;
+  phone?: string;
+}): Promise<Member> {
+  // Generate a unique member code with collision retry (max 5 attempts)
+  let memberCode = '';
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const suffix = Math.floor(Math.random() * 9000 + 1000).toString();
+    const candidate = `MEM-${suffix}`;
+    const { data: existing } = await supabase
+      .from('members')
+      .select('id')
+      .eq('member_code', candidate)
+      .maybeSingle();
+    if (!existing) {
+      memberCode = candidate;
+      break;
+    }
+  }
+  if (!memberCode) throw new Error('Could not generate a unique member code. Please try again.');
 
+  const insertPayload = {
+    member_code: memberCode,
+    full_name: data.fullName.trim(),
+    email: data.email.trim() || null,
+    phone: data.phone?.trim() || null,
+    status: 'active' as const,
+  };
+
+  const { data: member, error } = await supabase
+    .from('members')
+    .insert(insertPayload)
+    .select('id, member_code, full_name, email, phone, status, created_at')
+    .single();
+
+  if (error) throw error;
+  if (!member) throw new Error('Supabase did not return the registered member.');
+
+  return {
+    id: member.id,
+    memberCode: member.member_code,
+    fullName: member.full_name,
+    email: member.email,
+    phone: member.phone,
+    status: member.status,
+    createdAt: member.created_at,
+    activeLoansCount: 0,
+  };
+}
+
+/**
+ * Looks up an existing member by email for quick login/identification.
+ * Returns null if no member with that email exists.
+ */
+export async function getMemberByEmail(email: string): Promise<Member | null> {
+  const { data, error } = await supabase
+    .from('members')
+    .select('id, member_code, full_name, email, phone, status, created_at, book_issues (id, status)')
+    .eq('email', email.trim().toLowerCase())
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  return mapMemberRowToMember(data as unknown as MemberRow);
+}
+
+// DB row shape for book_requests joined queries
+interface BookRequestRow {
+  id: string;
+  book_id: string;
+  member_id: string;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  request_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  books?: {
+    id: string;
+    title: string;
+    cover_url: string | null;
+    availability: BookAvailability;
+    book_authors?: Array<{ authors: { name: string } | null }>;
+  } | null;
+  members?: {
+    id: string;
+    member_code: string;
+    full_name: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
+}
+
+function mapBookRequestRowToRequest(row: BookRequestRow): BookRequest {
+  const bookAuthors =
+    row.books?.book_authors?.flatMap((ba) =>
+      ba.authors?.name ? [ba.authors.name] : []
+    ) ?? [];
+
+  return {
+    id: row.id,
+    bookId: row.book_id,
+    memberId: row.member_id,
+    status: row.status,
+    requestNotes: row.request_notes ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    book: row.books
+      ? {
+          id: row.books.id,
+          title: row.books.title,
+          coverUrl: row.books.cover_url ?? undefined,
+          availability: row.books.availability,
+          authors: bookAuthors,
+        }
+      : undefined,
+    member: row.members
+      ? {
+          id: row.members.id,
+          memberCode: row.members.member_code,
+          fullName: row.members.full_name,
+          email: row.members.email,
+          phone: row.members.phone,
+        }
+      : undefined,
+  };
+}
+
+const bookRequestSelect = `
+  id, book_id, member_id, status, request_notes, created_at, updated_at,
+  books (id, title, cover_url, availability, book_authors (authors (name))),
+  members (id, member_code, full_name, email, phone)
+`;
+
+/**
+ * Creates a new borrow request.
+ * Guards: prevents requesting an already-issued book and duplicate pending requests.
+ */
+export async function createBookRequest(
+  bookId: string,
+  memberId: string,
+  notes?: string,
+): Promise<BookRequest> {
+  // 1. Check book availability
+  const { data: bookData, error: bookFetchError } = await supabase
+    .from('books')
+    .select('availability')
+    .eq('id', bookId)
+    .single();
+  if (bookFetchError) throw bookFetchError;
+  if (bookData?.availability === 'issued') {
+    throw new Error('This book is currently issued and unavailable for requests.');
+  }
+
+  // 2. Check for an existing pending request for this member + book
+  const { data: existing, error: existingError } = await supabase
+    .from('book_requests')
+    .select('id')
+    .eq('book_id', bookId)
+    .eq('member_id', memberId)
+    .eq('status', 'pending')
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) {
+    throw new Error('You already have a pending borrow request for this book.');
+  }
+
+  // 3. Insert the request
+  const { data: request, error: insertError } = await supabase
+    .from('book_requests')
+    .insert({
+      book_id: bookId,
+      member_id: memberId,
+      status: 'pending' as const,
+      request_notes: notes?.trim() || null,
+    })
+    .select(bookRequestSelect)
+    .single();
+
+  if (insertError) throw insertError;
+  if (!request) throw new Error('Supabase did not return the created request.');
+  return mapBookRequestRowToRequest(request as unknown as BookRequestRow);
+}
+
+/**
+ * Fetches book requests, optionally filtered by status. Sorted newest-first.
+ */
+export async function fetchBookRequests(status?: RequestStatus): Promise<BookRequest[]> {
+  let query = supabase
+    .from('book_requests')
+    .select(bookRequestSelect)
+    .order('created_at', { ascending: false });
+
+  if (status) {
+    query = query.eq('status', status);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return ((data ?? []) as unknown as BookRequestRow[]).map(mapBookRequestRowToRequest);
+}
+
+/**
+ * Approves a book request:
+ * 1. Creates a book_issues record via createBookIssue() (which also marks the book as 'issued')
+ * 2. Updates book_requests.status to 'approved'
+ */
+export async function approveBookRequest(
+  requestId: string,
+  bookId: string,
+  memberId: string,
+  dueDate: string,
+): Promise<void> {
+  await createBookIssue({ bookId, memberId, dueDate });
+
+  const { error } = await supabase
+    .from('book_requests')
+    .update({ status: 'approved' })
+    .eq('id', requestId);
+
+  if (error) throw error;
+}
+
+/**
+ * Rejects a book request — sets status to 'rejected'.
+ */
+export async function rejectBookRequest(requestId: string): Promise<void> {
+  const { error } = await supabase
+    .from('book_requests')
+    .update({ status: 'rejected' })
+    .eq('id', requestId);
+
+  if (error) throw error;
+}
