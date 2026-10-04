@@ -130,3 +130,43 @@ export interface BookRequest {
   };
 }
 
+// ============================================================================
+// NOTIFICATIONS (Phase 5)
+// ============================================================================
+
+export interface LibrarianNotificationSummary {
+  totalCount: number;
+  borrowRequests: Array<{
+    id: string;
+    bookTitle: string;
+    memberName: string;
+    createdAt: string;
+  }>;
+  returnRequests: Array<{
+    id: string;
+    bookTitle: string;
+    memberName: string;
+    requestedAt: string;
+  }>;
+}
+
+export type MemberNotificationType =
+  | 'request_approved'
+  | 'request_rejected'
+  | 'loan_due_soon'
+  | 'loan_overdue';
+
+export interface MemberNotificationItem {
+  id: string;
+  type: MemberNotificationType;
+  title: string;
+  message: string;
+  timestamp: string;
+  bookTitle: string;
+}
+
+export interface MemberNotificationSummary {
+  totalCount: number;
+  items: MemberNotificationItem[];
+}
+

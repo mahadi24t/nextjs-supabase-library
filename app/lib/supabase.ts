@@ -11,6 +11,9 @@ import type {
   CreateIssueFormData,
   RequestStatus,
   BookRequest,
+  LibrarianNotificationSummary,
+  MemberNotificationSummary,
+  MemberNotificationItem,
 } from '@/app/lib/types';
 
 
@@ -939,6 +942,163 @@ export async function requestBookReturn(issueId: string): Promise<void> {
     .eq('id', issueId);
 
   if (error) throw error;
+}
+
+// ============================================================================
+// NOTIFICATION QUERIES (Phase 5)
+// ============================================================================
+
+interface RawNotificationRequestRow {
+  id: string;
+  created_at: string;
+  books?: { title?: string | null } | null;
+  members?: { full_name?: string | null } | null;
+}
+
+interface RawNotificationIssueRow {
+  id: string;
+  return_requested_at?: string | null;
+  books?: { title?: string | null } | null;
+  members?: { full_name?: string | null } | null;
+}
+
+/**
+ * Fetches notification summary for librarians/admins:
+ * - Pending borrow requests awaiting review
+ * - Unreturned book issues with member return verification requested
+ */
+export async function fetchLibrarianNotificationSummary(): Promise<LibrarianNotificationSummary> {
+  const [requestsRes, issuesRes] = await Promise.all([
+    supabase
+      .from('book_requests')
+      .select('id, created_at, books (title), members (full_name)')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('book_issues')
+      .select('id, return_requested_at, books (title), members (full_name)')
+      .eq('return_requested', true)
+      .is('returned_at', null)
+      .order('return_requested_at', { ascending: false }),
+  ]);
+
+  const borrowRequests = ((requestsRes.data ?? []) as unknown as RawNotificationRequestRow[]).map((row) => ({
+    id: row.id,
+    bookTitle: row.books?.title ?? 'Unknown Book',
+    memberName: row.members?.full_name ?? 'Unknown Member',
+    createdAt: row.created_at,
+  }));
+
+  const returnRequests = ((issuesRes.data ?? []) as unknown as RawNotificationIssueRow[]).map((row) => ({
+    id: row.id,
+    bookTitle: row.books?.title ?? 'Unknown Book',
+    memberName: row.members?.full_name ?? 'Unknown Member',
+    requestedAt: row.return_requested_at ?? new Date().toISOString(),
+  }));
+
+  return {
+    totalCount: borrowRequests.length + returnRequests.length,
+    borrowRequests,
+    returnRequests,
+  };
+}
+
+interface RawMemberRequestRow {
+  id: string;
+  status: RequestStatus;
+  updated_at?: string | null;
+  created_at: string;
+  books?: { title?: string | null } | null;
+}
+
+interface RawMemberIssueRow {
+  id: string;
+  due_date: string;
+  return_requested?: boolean;
+  books?: { title?: string | null } | null;
+}
+
+/**
+ * Fetches notification summary for an authenticated member:
+ * - Decisions on their book requests (approved / rejected)
+ * - Due date warnings (<= 2 days) and overdue alerts on active loans
+ */
+export async function fetchMemberNotificationSummary(
+  memberId: string,
+): Promise<MemberNotificationSummary> {
+  const [requestsRes, issuesRes] = await Promise.all([
+    supabase
+      .from('book_requests')
+      .select('id, status, updated_at, created_at, books (title)')
+      .eq('member_id', memberId)
+      .in('status', ['approved', 'rejected'])
+      .order('updated_at', { ascending: false })
+      .limit(10),
+    supabase
+      .from('book_issues')
+      .select('id, due_date, return_requested, books (title)')
+      .eq('member_id', memberId)
+      .is('returned_at', null)
+      .order('due_date', { ascending: true }),
+  ]);
+
+  const items: MemberNotificationItem[] = [];
+  const now = new Date();
+  const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
+
+  // Process loan due dates & overdue alerts
+  for (const issue of (issuesRes.data ?? []) as unknown as RawMemberIssueRow[]) {
+    const dueDate = new Date(issue.due_date);
+    const bookTitle = issue.books?.title ?? 'Borrowed Book';
+    const dueDateFormatted = dueDate.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    });
+
+    if (now > dueDate) {
+      items.push({
+        id: `loan-overdue-${issue.id}`,
+        type: 'loan_overdue',
+        title: 'Book Overdue',
+        message: `Overdue: "${bookTitle}" was due on ${dueDateFormatted}. Please return it.`,
+        timestamp: issue.due_date,
+        bookTitle,
+      });
+    } else if (dueDate.getTime() - now.getTime() <= twoDaysMs) {
+      items.push({
+        id: `loan-due-soon-${issue.id}`,
+        type: 'loan_due_soon',
+        title: 'Return Due Soon',
+        message: `Reminder: "${bookTitle}" is due on ${dueDateFormatted}.`,
+        timestamp: issue.due_date,
+        bookTitle,
+      });
+    }
+  }
+
+  // Process request decisions (approved / rejected)
+  for (const req of (requestsRes.data ?? []) as unknown as RawMemberRequestRow[]) {
+    const bookTitle = req.books?.title ?? 'Requested Book';
+    const isApproved = req.status === 'approved';
+    items.push({
+      id: `req-${req.status}-${req.id}`,
+      type: isApproved ? 'request_approved' : 'request_rejected',
+      title: isApproved ? 'Request Approved' : 'Request Rejected',
+      message: isApproved
+        ? `Your request for "${bookTitle}" was approved! You can pick it up at the circulation desk.`
+        : `Your request for "${bookTitle}" was not approved.`,
+      timestamp: req.updated_at || req.created_at,
+      bookTitle,
+    });
+  }
+
+  // Sort items newest first
+  items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  return {
+    totalCount: items.length,
+    items,
+  };
 }
 
 

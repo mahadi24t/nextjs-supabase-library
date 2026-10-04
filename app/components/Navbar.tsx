@@ -1,12 +1,21 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Sun, Moon, Search, Bell, Library, LogOut, ShieldCheck, Lock, User } from 'lucide-react';
 import { useAuth } from '@/app/context/AuthContext';
 import { useMemberAuth } from '@/app/context/MemberAuthContext';
 import MemberAuthModal from '@/app/components/MemberAuthModal';
 import MemberDashboardModal from '@/app/components/MemberDashboardModal';
+import NotificationPopover from '@/app/components/NotificationPopover';
+import {
+  fetchLibrarianNotificationSummary,
+  fetchMemberNotificationSummary,
+} from '@/app/lib/supabase';
+import type {
+  LibrarianNotificationSummary,
+  MemberNotificationSummary,
+} from '@/app/lib/types';
 
 interface NavbarProps {
   darkMode: boolean;
@@ -30,6 +39,10 @@ export default function Navbar({
   const [memberAuthOpen, setMemberAuthOpen] = useState(false);
   const [memberDashboardOpen, setMemberDashboardOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [librarianSummary, setLibrarianSummary] = useState<LibrarianNotificationSummary | null>(null);
+  const [memberSummary, setMemberSummary] = useState<MemberNotificationSummary | null>(null);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
 
   useEffect(() => {
     const isDark =
@@ -38,12 +51,55 @@ export default function Navbar({
     setIsDarkMode(isDark);
   }, []);
 
+  const loadNotifications = useCallback(async () => {
+    if (isAdmin) {
+      setNotificationsLoading(true);
+      try {
+        const summary = await fetchLibrarianNotificationSummary();
+        setLibrarianSummary(summary);
+      } catch (err) {
+        console.error('Failed to load librarian notifications:', err);
+      } finally {
+        setNotificationsLoading(false);
+      }
+    } else if (isMemberLoggedIn && currentMember?.id) {
+      setNotificationsLoading(true);
+      try {
+        const summary = await fetchMemberNotificationSummary(currentMember.id);
+        setMemberSummary(summary);
+      } catch (err) {
+        console.error('Failed to load member notifications:', err);
+      } finally {
+        setNotificationsLoading(false);
+      }
+    } else {
+      setLibrarianSummary(null);
+      setMemberSummary(null);
+    }
+  }, [isAdmin, isMemberLoggedIn, currentMember?.id]);
+
+  useEffect(() => {
+    loadNotifications();
+
+    const interval = setInterval(() => {
+      loadNotifications();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [loadNotifications]);
+
   const toggleTheme = () => {
     const isDark = document.documentElement.classList.toggle('dark');
     localStorage.setItem('libstack_theme', isDark ? 'dark' : 'light');
     setIsDarkMode(isDark);
     onToggleDark?.();
   };
+
+  const totalNotifications = isAdmin
+    ? librarianSummary?.totalCount ?? 0
+    : isMemberLoggedIn
+      ? memberSummary?.totalCount ?? 0
+      : 0;
 
   const showSearch = searchQuery !== undefined && onSearchChange !== undefined;
 
@@ -86,15 +142,37 @@ export default function Navbar({
       )}
 
       <div className="flex items-center gap-1.5 sm:gap-2 ml-auto">
-        {/* Notification bell */}
-        <button
-          id="notification-btn"
-          aria-label="Notifications"
-          className="relative flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
-        >
-          <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
-          <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-violet-500 ring-2 ring-white dark:ring-slate-900" aria-hidden="true" />
-        </button>
+        {/* Dynamic Notification Bell and Popover */}
+        <div className="relative">
+          <button
+            id="notification-btn"
+            onClick={() => setNotificationOpen((prev) => !prev)}
+            aria-label={`Notifications (${totalNotifications} unread)`}
+            aria-expanded={notificationOpen}
+            title={totalNotifications > 0 ? `${totalNotifications} new notification(s)` : 'Notifications'}
+            className="relative flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 cursor-pointer"
+          >
+            <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
+            {totalNotifications > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white shadow-sm ring-2 ring-white dark:ring-slate-900">
+                <span className="absolute -inset-0.5 rounded-full bg-violet-500/50 animate-ping pointer-events-none" />
+                <span className="relative">{totalNotifications > 9 ? '9+' : totalNotifications}</span>
+              </span>
+            )}
+          </button>
+
+          <NotificationPopover
+            isOpen={notificationOpen}
+            onClose={() => setNotificationOpen(false)}
+            isAdmin={isAdmin}
+            isMemberLoggedIn={isMemberLoggedIn}
+            librarianSummary={librarianSummary}
+            memberSummary={memberSummary}
+            loading={notificationsLoading}
+            onRefresh={loadNotifications}
+            onOpenMemberDashboard={() => setMemberDashboardOpen(true)}
+          />
+        </div>
 
         {/* Dark mode toggle */}
         <button
