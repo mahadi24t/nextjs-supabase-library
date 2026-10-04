@@ -80,6 +80,7 @@ export interface BookIssue {
     title: string;
     coverUrl?: string;
     authors: string[];
+    location?: ShelfLocation;
   };
   member?: {
     id: string;

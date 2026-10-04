@@ -1,8 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { Sun, Moon, Search, Bell, Library, LogOut, ShieldCheck, Lock } from 'lucide-react';
+import { Sun, Moon, Search, Bell, Library, LogOut, ShieldCheck, Lock, User } from 'lucide-react';
 import { useAuth } from '@/app/context/AuthContext';
+import { useMemberAuth } from '@/app/context/MemberAuthContext';
+import MemberAuthModal from '@/app/components/MemberAuthModal';
+import MemberDashboardModal from '@/app/components/MemberDashboardModal';
 
 interface NavbarProps {
   darkMode: boolean;
@@ -22,6 +26,9 @@ export default function Navbar({
   title,
 }: NavbarProps) {
   const { isAdmin, logout, openLoginModal } = useAuth();
+  const { currentMember, isMemberLoggedIn } = useMemberAuth();
+  const [memberAuthOpen, setMemberAuthOpen] = useState(false);
+  const [memberDashboardOpen, setMemberDashboardOpen] = useState(false);
   const showSearch = searchQuery !== undefined && onSearchChange !== undefined;
 
   return (
@@ -83,6 +90,41 @@ export default function Navbar({
           {darkMode ? <Sun className="w-4 h-4 sm:w-5 sm:h-5 text-amber-400" /> : <Moon className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />}
         </button>
 
+        {/* Member Authentication Status / Actions */}
+        {isMemberLoggedIn && currentMember ? (
+          <button
+            id="member-profile-btn"
+            onClick={() => setMemberDashboardOpen(true)}
+            aria-label={`Member profile: ${currentMember.fullName}`}
+            title="View My Borrowed Books & Requests"
+            className="flex items-center gap-2 pl-1 pr-2.5 sm:pr-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 min-h-[36px] group cursor-pointer"
+          >
+            <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-violet-600 to-indigo-600 text-white flex items-center justify-center text-xs font-bold shadow-sm shrink-0">
+              {currentMember.fullName.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-left">
+              <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[85px] sm:max-w-[130px]">
+                {currentMember.fullName.split(' ')[0]}
+              </span>
+              <span className="text-slate-400 dark:text-slate-500">•</span>
+              <span className="font-mono text-[11px] text-violet-600 dark:text-violet-400 font-medium shrink-0">
+                {currentMember.memberCode}
+              </span>
+            </div>
+          </button>
+        ) : (
+          <button
+            id="member-login-btn"
+            onClick={() => setMemberAuthOpen(true)}
+            aria-label="Member Login"
+            className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-full text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-slate-700 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 min-h-[36px] cursor-pointer"
+          >
+            <User className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 shrink-0" />
+            <span className="hidden sm:inline">Member Login</span>
+            <span className="sm:hidden">Member</span>
+          </button>
+        )}
+
         {/* Admin Authentication Status / Actions */}
         {isAdmin ? (
           <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-700">
@@ -130,6 +172,16 @@ export default function Navbar({
           </button>
         )}
       </div>
+
+      {/* Member Modals */}
+      <MemberAuthModal
+        isOpen={memberAuthOpen}
+        onClose={() => setMemberAuthOpen(false)}
+      />
+      <MemberDashboardModal
+        isOpen={memberDashboardOpen}
+        onClose={() => setMemberDashboardOpen(false)}
+      />
     </header>
   );
 }

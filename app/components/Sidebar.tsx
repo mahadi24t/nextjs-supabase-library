@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -11,8 +12,12 @@ import {
   ChevronRight,
   Library,
   Lock,
+  User,
 } from 'lucide-react';
 import { useAuth } from '@/app/context/AuthContext';
+import { useMemberAuth } from '@/app/context/MemberAuthContext';
+import MemberAuthModal from '@/app/components/MemberAuthModal';
+import MemberDashboardModal from '@/app/components/MemberDashboardModal';
 import { cn } from '@/app/lib/utils';
 
 interface SidebarProps {
@@ -37,6 +42,9 @@ export default function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const { isAdmin, openLoginModal } = useAuth();
+  const { currentMember, isMemberLoggedIn } = useMemberAuth();
+  const [memberAuthOpen, setMemberAuthOpen] = useState(false);
+  const [memberDashboardOpen, setMemberDashboardOpen] = useState(false);
 
   const activeNav =
     propActiveNav ??
@@ -118,6 +126,53 @@ export default function Sidebar({
       </nav>
 
 
+      {/* Member Profile / Login in Sidebar */}
+      <div className="p-2 border-t border-slate-800">
+        {isMemberLoggedIn && currentMember ? (
+          <button
+            id="sidebar-member-profile-btn"
+            onClick={() => setMemberDashboardOpen(true)}
+            title={`Member: ${currentMember.fullName} (${currentMember.memberCode}) - View My Books & Requests`}
+            aria-label="View My Books & Requests"
+            className={cn(
+              'flex items-center gap-3 w-full p-2 rounded-lg text-slate-300 hover:bg-slate-800/80 transition-all text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 group cursor-pointer',
+              collapsed ? 'justify-center' : '',
+            )}
+          >
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-violet-600 to-indigo-600 text-white flex items-center justify-center text-xs font-bold shrink-0 shadow-md shadow-violet-600/30">
+              {currentMember.fullName.charAt(0).toUpperCase()}
+            </div>
+            {!collapsed && (
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-200 truncate group-hover:text-white">
+                  {currentMember.fullName}
+                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="font-mono text-[10px] text-violet-400 font-medium">
+                    {currentMember.memberCode}
+                  </span>
+                  <span className="text-[10px] text-slate-500">• My Books</span>
+                </div>
+              </div>
+            )}
+          </button>
+        ) : (
+          <button
+            id="sidebar-member-login-btn"
+            onClick={() => setMemberAuthOpen(true)}
+            title="Member Login"
+            aria-label="Member Login"
+            className={cn(
+              'flex items-center gap-3 w-full p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 cursor-pointer',
+              collapsed ? 'justify-center' : '',
+            )}
+          >
+            <User className="w-4 h-4 shrink-0 text-slate-400" />
+            {!collapsed && <span>Member Login</span>}
+          </button>
+        )}
+      </div>
+
       {/* Collapse Toggle */}
       <div className="p-2 border-t border-slate-800">
         <button
@@ -132,6 +187,15 @@ export default function Sidebar({
           )}
         </button>
       </div>
+
+      <MemberAuthModal
+        isOpen={memberAuthOpen}
+        onClose={() => setMemberAuthOpen(false)}
+      />
+      <MemberDashboardModal
+        isOpen={memberDashboardOpen}
+        onClose={() => setMemberDashboardOpen(false)}
+      />
     </aside>
   );
 }

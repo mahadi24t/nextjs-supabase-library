@@ -455,6 +455,7 @@ export interface BookIssueRow {
     id: string;
     title: string;
     cover_url: string | null;
+    shelf_locations?: ShelfLocationRow | ShelfLocationRow[] | null;
     book_authors?: Array<{ authors: { name: string } | null }>;
   } | null;
   members?: {
@@ -475,6 +476,16 @@ export function mapBookIssueRowToIssue(row: BookIssueRow): BookIssue {
   }
 
   const authors = row.books?.book_authors?.flatMap((ba) => (ba.authors?.name ? [ba.authors.name] : [])) ?? [];
+  const shelfLoc = Array.isArray(row.books?.shelf_locations)
+    ? row.books.shelf_locations[0]
+    : row.books?.shelf_locations;
+  const location = shelfLoc
+    ? {
+        shelf: shelfLoc.shelf_code,
+        row: shelfLoc.row_label,
+        slot: shelfLoc.slot_label,
+      }
+    : undefined;
 
   return {
     id: row.id,
@@ -491,6 +502,7 @@ export function mapBookIssueRowToIssue(row: BookIssueRow): BookIssue {
           title: row.books.title,
           coverUrl: row.books.cover_url ?? undefined,
           authors,
+          location,
         }
       : undefined,
     member: row.members
@@ -851,3 +863,58 @@ export async function rejectBookRequest(requestId: string): Promise<void> {
 
   if (error) throw error;
 }
+
+export const memberActiveIssueSelect = `
+  id, book_id, member_id, issued_at, due_date, returned_at, status, notes,
+  books (
+    id, title, cover_url,
+    shelf_locations (shelf_code, row_label, slot_label),
+    book_authors (authors (name))
+  ),
+  members (id, member_code, full_name, email, phone)
+`;
+
+/**
+ * Fetches all currently active (unreturned) issues for a specific member,
+ * joined with book metadata and shelf locations, with computed overdue status.
+ */
+export async function fetchMemberActiveIssues(memberId: string): Promise<BookIssue[]> {
+  const { data, error } = await supabase
+    .from('book_issues')
+    .select(memberActiveIssueSelect)
+    .eq('member_id', memberId)
+    .is('returned_at', null)
+    .order('due_date', { ascending: true });
+
+  if (error) throw error;
+  return ((data ?? []) as unknown as BookIssueRow[]).map(mapBookIssueRowToIssue);
+}
+
+/**
+ * Fetches all book requests submitted by a specific member, sorted newest-first.
+ */
+export async function fetchMemberBookRequests(memberId: string): Promise<BookRequest[]> {
+  const { data, error } = await supabase
+    .from('book_requests')
+    .select(bookRequestSelect)
+    .eq('member_id', memberId)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return ((data ?? []) as unknown as BookRequestRow[]).map(mapBookRequestRowToRequest);
+}
+
+/**
+ * Cancels a pending book request by setting its status to 'cancelled'.
+ * Guarded to only cancel requests that are currently 'pending'.
+ */
+export async function cancelBookRequest(requestId: string): Promise<void> {
+  const { error } = await supabase
+    .from('book_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', requestId)
+    .eq('status', 'pending');
+
+  if (error) throw error;
+}
+
