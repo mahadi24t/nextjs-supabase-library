@@ -11,8 +11,10 @@ import FilterPills from '@/app/components/FilterPills';
 import AddBookModal from '@/app/components/AddBookModal';
 import EditBookModal from '@/app/components/EditBookModal';
 import NewIssueModal from '@/app/components/NewIssueModal';
+import AiAssistantModal from '@/app/components/AiAssistantModal';
+import BookDetailsModal from '@/app/components/BookDetailsModal';
 import { useAuth } from '@/app/context/AuthContext';
-import { bookSelect, mapBookRowToBook, supabase, returnBookByBookId, type BookRow } from '@/app/lib/supabase';
+import { bookSelect, mapBookRowToBook, supabase, returnBookByBookId, fetchBookById, type BookRow } from '@/app/lib/supabase';
 import type { Book } from '@/app/lib/types';
 
 function generatePageNumbers(current: number, total: number): (number | '...')[] {
@@ -134,6 +136,18 @@ export default function CatalogPage() {
   const [editingBook, setEditingBook] = useState<Book | null>(null);
   const [issuingBook, setIssuingBook] = useState<Book | null>(null);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+
+  // AI Assistant book details modal wiring
+  const [selectedBookForAiModal, setSelectedBookForAiModal] = useState<Book | null>(null);
+  const [aiDetailsModalOpen, setAiDetailsModalOpen] = useState(false);
+
+  const handleSelectBookFromAi = async (bookId: string) => {
+    const book = await fetchBookById(bookId);
+    if (book) {
+      setSelectedBookForAiModal(book);
+      setAiDetailsModalOpen(true);
+    }
+  };
 
   // Pagination state
   const ITEMS_PER_PAGE = 24;
@@ -493,13 +507,23 @@ export default function CatalogPage() {
           id="add-book-fab"
           onClick={() => setAddModalOpen(true)}
           aria-label="Add a new book"
-          className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white rounded-full shadow-lg shadow-violet-600/40 flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
+          className="md:hidden fixed bottom-36 right-4 z-30 w-14 h-14 bg-violet-600 hover:bg-violet-700 active:scale-95 text-white rounded-full shadow-lg shadow-violet-600/40 flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
         >
           <Plus className="w-6 h-6" />
         </button>
       )}
 
       <BottomNav activeNav={activeNav} onNavChange={setActiveNav} />
+
+      {/* Floating AI Assistant */}
+      <AiAssistantModal onSelectBook={handleSelectBookFromAi} />
+
+      {/* Book Details Modal opened from AI chat */}
+      <BookDetailsModal
+        book={selectedBookForAiModal}
+        isOpen={aiDetailsModalOpen}
+        onClose={() => setAiDetailsModalOpen(false)}
+      />
 
       {addModalOpen && (
         <AddBookModal

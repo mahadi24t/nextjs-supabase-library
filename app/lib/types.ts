@@ -182,3 +182,25 @@ export interface MemberNotificationSummary {
   items: MemberNotificationItem[];
 }
 
+// ============================================================================
+// AI ASSISTANT & CHAT RECOMMENDATIONS (Phase 6)
+// ============================================================================
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+export interface AiCatalogContextItem {
+  id: string;
+  title: string;
+  subtitle?: string | null;
+  authors: string[];
+  genres: string[];
+  availableCopies: number;
+  totalCopies: number;
+  shelfCode: string;
+}
+

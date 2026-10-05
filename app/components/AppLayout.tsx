@@ -5,6 +5,10 @@ import Sidebar from '@/app/components/Sidebar';
 import Navbar from '@/app/components/Navbar';
 import BottomNav from '@/app/components/BottomNav';
 import Footer from '@/app/components/Footer';
+import AiAssistantModal from '@/app/components/AiAssistantModal';
+import BookDetailsModal from '@/app/components/BookDetailsModal';
+import { fetchBookById } from '@/app/lib/supabase';
+import type { Book } from '@/app/lib/types';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -22,8 +26,19 @@ export default function AppLayout({
   searchPlaceholder,
 }: AppLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
   const [darkMode, setDarkMode] = useState(false);
+
+  // AI Assistant book details modal wiring
+  const [selectedBookForModal, setSelectedBookForModal] = useState<Book | null>(null);
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+
+  const handleSelectBookFromAi = async (bookId: string) => {
+    const book = await fetchBookById(bookId);
+    if (book) {
+      setSelectedBookForModal(book);
+      setDetailsModalOpen(true);
+    }
+  };
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
@@ -56,8 +71,19 @@ export default function AppLayout({
       </div>
 
       <BottomNav />
+
+      {/* Floating AI Assistant */}
+      <AiAssistantModal onSelectBook={handleSelectBookFromAi} />
+
+      {/* Global Book Details & Borrow Modal */}
+      <BookDetailsModal
+        book={selectedBookForModal}
+        isOpen={detailsModalOpen}
+        onClose={() => setDetailsModalOpen(false)}
+      />
     </div>
   );
 }
+
 
 

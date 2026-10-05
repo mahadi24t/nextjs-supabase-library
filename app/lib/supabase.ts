@@ -1163,4 +1163,179 @@ export async function fetchMemberNotificationSummary(
   };
 }
 
+// ============================================================================
+// PHASE 6: AI CATALOG CONTEXT & RECOMMENDATION HELPERS
+// ============================================================================
+
+interface CatalogContextBookRow {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  copies: number | null;
+  shelf_locations: { shelf_code: string } | { shelf_code: string }[] | null;
+  book_authors: { authors: { name: string } | null }[] | null;
+  book_genres: { genres: { name: string } | null }[] | null;
+}
+
+interface CatalogItem {
+  id: string;
+  title: string;
+  subtitle?: string | null;
+  authors: string;
+  genres: string;
+  shelf: string;
+  available: number;
+  total: number;
+}
+
+let cachedCatalogItems: CatalogItem[] | null = null;
+let lastCatalogFetchTime = 0;
+
+const BENGALI_STOPWORDS = new Set([
+  'বই', 'বইটি', 'বইগুলো', 'কী', 'কি', 'আছে', 'নিয়ে', 'জন্য', 'একটি', 'ভালো',
+  'কোন', 'কোনো', 'আমারে', 'আমাকে', 'দাও', 'বলুন', 'সাজেস্ট', 'করুন', 'পড়তে',
+  'চাই', 'খুঁজছি', 'সম্পর্কে', 'সম্পর্কিত', 'একটু',
+]);
+
+function getBengaliStems(word: string): string[] {
+  const stems = [word];
+  const suffixes = ['ের', 'দের', 'গুলো', 'গুলি', 'কে', 'তে', 'র', 'এ', 'টি', 'টা', 'খানা'];
+  for (const suf of suffixes) {
+    if (word.endsWith(suf)) {
+      const stripped = word.slice(0, -suf.length);
+      if (stripped.length >= 3) {
+        stems.push(stripped);
+      }
+    }
+  }
+  return stems;
+}
+
+export async function getAiCatalogContext(userQuery?: string): Promise<string> {
+  const now = Date.now();
+  // Refresh cache if stale (60 seconds)
+  if (!cachedCatalogItems || now - lastCatalogFetchTime >= 60000) {
+    // 1. Fetch books with relations
+    const { data: books, error: booksErr } = await supabase
+      .from('books')
+      .select(`
+        id, title, subtitle, copies,
+        shelf_locations ( shelf_code ),
+        book_authors ( authors ( name ) ),
+        book_genres ( genres ( name ) )
+      `);
+
+    if (booksErr || !books) throw new Error('Failed to load books for AI context');
+
+    // 2. Fetch active loans to compute real-time available stock
+    const { data: activeLoans, error: loansErr } = await supabase
+      .from('book_issues')
+      .select('book_id')
+      .is('returned_at', null);
+
+    const activeLoanCountMap: Record<string, number> = {};
+    if (!loansErr && activeLoans) {
+      for (const loan of activeLoans) {
+        activeLoanCountMap[loan.book_id] = (activeLoanCountMap[loan.book_id] || 0) + 1;
+      }
+    }
+
+    cachedCatalogItems = (books as unknown as CatalogContextBookRow[]).map((b) => {
+      const authors = (b.book_authors || [])
+        .map((ba) => ba.authors?.name)
+        .filter((name): name is string => Boolean(name))
+        .join(', ');
+      const genres = (b.book_genres || [])
+        .map((bg) => bg.genres?.name)
+        .filter((name): name is string => Boolean(name))
+        .join(', ');
+      const shelfLocation = Array.isArray(b.shelf_locations) ? b.shelf_locations[0] : b.shelf_locations;
+      const shelf = shelfLocation?.shelf_code || 'N/A';
+      const total = b.copies || 1;
+      const active = activeLoanCountMap[b.id] || 0;
+      const available = Math.max(0, total - active);
+
+      return {
+        id: b.id,
+        title: b.title,
+        subtitle: b.subtitle,
+        authors: authors || 'Unknown',
+        genres,
+        shelf,
+        available,
+        total,
+      };
+    });
+
+    lastCatalogFetchTime = now;
+  }
+
+  let selectedBooks = cachedCatalogItems;
+
+  if (userQuery && userQuery.trim().length > 0) {
+    const rawTerms = userQuery
+      .toLowerCase()
+      .split(/[\s,।!?._-]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 1 && !BENGALI_STOPWORDS.has(t));
+
+    if (rawTerms.length > 0) {
+      // Score books by relevance to user query terms and their Bengali stems
+      const scored = cachedCatalogItems.map((b) => {
+        let score = 0;
+        const titleLower = b.title.toLowerCase();
+        const genreLower = b.genres.toLowerCase();
+        const authorLower = b.authors.toLowerCase();
+        const subLower = b.subtitle?.toLowerCase() || '';
+
+        for (const term of rawTerms) {
+          const stems = getBengaliStems(term);
+          for (const stem of stems) {
+            const weight = stem.length >= 6 ? 25 : stem.length >= 4 ? 15 : 10;
+            if (titleLower.includes(stem)) score += weight * 2;
+            if (genreLower.includes(stem)) score += weight;
+            if (authorLower.includes(stem)) score += weight;
+            if (subLower.includes(stem)) score += weight;
+          }
+        }
+        if (score > 0 && b.available > 0) score += 2;
+        return { item: b, score };
+      });
+
+      const matched = scored
+        .filter((s) => s.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((s) => s.item);
+
+      const remaining = scored.filter((s) => s.score === 0).map((s) => s.item);
+
+      // Include top matches + a diverse set up to 35 books (approx 2,000 tokens)
+      selectedBooks = [...matched, ...remaining].slice(0, 35);
+    } else {
+      selectedBooks = cachedCatalogItems.slice(0, 35);
+    }
+  } else {
+    selectedBooks = cachedCatalogItems.slice(0, 35);
+  }
+
+  return selectedBooks
+    .map(
+      (b) =>
+        `[ID: ${b.id} | Title: "${b.title}${b.subtitle ? ' - ' + b.subtitle : ''}" | Authors: ${b.authors} | Genres: ${b.genres} | Shelf: ${b.shelf} | Stock: ${b.available}/${b.total} available]`,
+    )
+    .join('\n');
+}
+
+// Single book loader for details modal triggered from chat
+export async function fetchBookById(bookId: string): Promise<Book | null> {
+  const { data, error } = await supabase
+    .from('books')
+    .select(bookSelect)
+    .eq('id', bookId)
+    .single();
+
+  if (error || !data) return null;
+  return mapBookRowToBook(data as unknown as BookRow);
+}
+
 
